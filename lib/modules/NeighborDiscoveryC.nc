@@ -9,11 +9,18 @@ implementation{
     components new NeighborDiscoveryP();
     NeighborDiscovery = NeighborDiscoveryP.NeighborDiscovery;
 
+    components new SimpleSendC(AM_HELLO) as SimpleSend;
+    NeighborDiscoveryP.Sender -> SimpleSend;
+
+    components new AMReceiverC(AM_REPLY) as PingReceive;
+    NeighborDiscoveryP.Receive -> PingReceive;
+
+    components ActiveMessageC;
+    NeighborDiscoveryP.AMControl -> ActiveMessageC;
+    
     components new TimerMilliC() as Timer0;
     components RandomC as Random;
-    components new SimpleSendC(HELLO_PING) as SimpleSend;
     
     NeighborDiscoveryP.Timer0 -> Timer0;
     NeighborDiscoveryP.Random -> Random;
-    NeighborDiscoveryP.SimpleSend -> SimpleSend;
 }
