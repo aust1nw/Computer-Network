@@ -13,7 +13,7 @@ implementation{
     components new NeighborDiscoverP();
     NeighborDiscovery = NeighborDiscoverP.NeighborDiscover;
 
-    components new TimerMilliC as Timer1;
+    components new TimerMilliC() as Timer1;
     components new RandomC as Random;
     
     NeighborDiscoverP.neighborTimer -> Timer1;
