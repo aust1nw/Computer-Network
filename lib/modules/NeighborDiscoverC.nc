@@ -10,6 +10,12 @@ configuration NeighborDiscoveryC{
 }
 
 implementation{
-    components NeighborDiscoveryP;
-    NeighborDiscovery = NeighborDiscoveryP;
+    components new NeighborDiscoverP();
+    NeighborDiscovery = NeighborDiscoverP.NeighborDiscover;
+
+    components new TimerMilliC as Timer1;
+    components new RandomC as Random;
+    
+    NeighborDiscoverP.neighborTimer -> Timer1;
+    NeighborDiscoverP.Random -> Random;
 }
