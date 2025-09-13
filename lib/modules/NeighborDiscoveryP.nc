@@ -45,22 +45,15 @@ implementation{
 
         input->dest = TOS_BROADCAST_ADDR;
         input->src = TOS_NODE_ID;
-        input->type = AM_HELLO;
+        input->packet = AM_HELLO;
         input->TTL = 1;
         
         call Queue.enqueue(input);
-        post sendBufferTask();
+        post Sender.sendBufferTask();
         call neighborTimer.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
     }
     event void neighborTimer.fired(){
         post findNeighbors();
-    }
-    task void sendBufferTask(){
-        if(!call Queue.isEmpty()){
-            sendInfo* buf = call Queue.dequeue();
-            call Sender.send(buf->dest, (uint8_t*)buf, sizeof(sendInfo));
-            call Pool.put(buf); 
-        }
     }
     command void NeighborDiscovery.printNeighbors(){    
         for(uint8_t i = 0; i < neighborCount; i++){
@@ -69,20 +62,20 @@ implementation{
 
     }
 
-    command void NeighborDiscovery.receiveNeighbors(uint16_t type, uint16_t src){
-        if(type == AM_HELLO){
+    command void NeighborDiscovery.receiveNeighbors(uint16_t packet, uint16_t src){
+        if(packet == AM_HELLO){
             sendInfo* buf = call Pool.get();
             if(buf != NULL){
                 return;
             }
             buf->dest = src;
             buf->src = TOS_NODE_ID;
-            buf->type = AM_REPLY;
+            buf->packet = AM_REPLY;
             buf->TTL = 1;
             call Queue.enqueue(input);
-            post sendBufferTask();
+            post Sender.sendBufferTask();
         }
-        else if(type == AM_REPLY){
+        else if(packet == AM_REPLY){
             if(!isNeighbor(src) && neighborCount < 20){
                 neighborList[neighborCount++] = src;
             }

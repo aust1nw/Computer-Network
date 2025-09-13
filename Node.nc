@@ -22,6 +22,7 @@ module Node{
    uses interface SimpleSend as Sender;
 
    uses interface CommandHandler;
+   uses interface NeighborDiscovery;
 }
 
 implementation{
@@ -32,6 +33,7 @@ implementation{
 
    event void Boot.booted(){
       call AMControl.start();
+      call NeighborDiscovery.start();
 
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
@@ -54,6 +56,20 @@ implementation{
          dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
          return msg;
       }
+      // start of Neighbor Discovery packet handling
+      if(len == sizeof(sendInfo)){
+         sendInfo* inMsg = (sendInfo*) payload;
+         if(inMsg->packet == AM_HELLO || inMsg->packet == AM_REPLY){
+            dbg(NEIGHBOR_CHANNEL, "Received %s from %d\n", (inMsg->packet == AM_HELLO) ? "HELLO":"REPLY", inMsg->src);
+            call NeighborDiscovery.receiveNeighbors(inMsg->packet, inMsg->src);
+         }
+         else{
+            dbg(GENERAL_CHANNEL, "Unknown Neighbor Packet Type %d\n", inMsg->packet);
+         }
+         
+         return msg;
+      }
+      // end
       dbg(GENERAL_CHANNEL, "Unknown Packet Type %d\n", len);
       return msg;
    }
@@ -65,7 +81,9 @@ implementation{
       call Sender.send(sendPackage, destination);
    }
 
-   event void CommandHandler.printNeighbors(){}
+   event void CommandHandler.printNeighbors(){
+      call NeighborDiscovery.printNeighbors();
+   }
 
    event void CommandHandler.printRouteTable(){}
 
