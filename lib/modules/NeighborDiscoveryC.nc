@@ -1,35 +1,34 @@
 #include <Timer.h>
-#include "../../includes/channel.h"
+#include "../../includes/channels.h"
 
-generic configuration NeighborDiscoveryC(){
-    provides interface NeighborDiscovery;
+generic configuration NeighborDiscoveryC() {
+  provides interface NeighborDiscovery;
 }
 
-implementation{
-    components new NeighborDiscoveryP();
-    
-    NeighborDiscovery = NeighborDiscoveryP.NeighborDiscovery;
+implementation {
+  components new NeighborDiscoveryP() as NeighborD;
+  NeighborDiscovery = NeighborD.NeighborDiscovery;
 
-    components new SimpleSendC(AM_HELLO);
-    
-    NeighborDiscoveryP.Sender -> SimpleSendC;
+  components new TimerMilliC() as NeighborTimer;
+  NeighborD.NeighborTimer -> NeighborTimer;
 
-    components new AMReceiverC(AM_REPLY) as PingReceive;
-    components ActiveMessageC;
+  components RandomC as Random;
+  NeighborD.Random -> Random;
 
-    NeighborDiscoveryP.Receive -> PingReceive;
-    NeighborDiscoveryP.AMControl -> ActiveMessageC;
+  components ActiveMessageC;
+  NeighborD.Packet -> ActiveMessageC;
+  NeighborD.AMPacket -> ActiveMessageC;
+  NeighborD.AMSend -> ActiveMessageC;
+  NeighborD.AMControl -> ActiveMessageC;
 
-    components new TimerMilliC() as Timer0;
-    components RandomC as Random;
-    
-    NeighborDiscoveryP.Timer0 -> Timer0;
-    NeighborDiscoveryP.Random -> Random;
+  components new PoolC(sendInfo, 20) as Pool;
+  components new QueueC(sendInfo*, 20) as Queue;
+  NeighborD.Pool -> Pool;
+  NeighborD.Queue -> Queue;
 
-    // is list better?
-    components new PoolC(sendInfo, 20);
-    components new QueueC(sendInfo*, 20);
+  components new SimpleSendC(AM_PACK) as Sender;
+  NeighborD.Sender -> Sender;
 
-    NeighborDiscoveryP.Pool -> PoolC;
-    NeighborDiscoveryP.Queue -> QueueC;
+  components new AMReceiverC(AM_PACK) as PingReceive;
+  NeighborD.Receive -> PingReceive;
 }

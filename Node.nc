@@ -57,18 +57,18 @@ implementation{
          return msg;
       }
       // start of Neighbor Discovery packet handling
-      if(len == sizeof(sendInfo)){
-         sendInfo* inMsg = (sendInfo*) payload;
-         if(inMsg->packet == AM_HELLO || inMsg->packet == AM_REPLY){
-            dbg(NEIGHBOR_CHANNEL, "Received %s from %d\n", (inMsg->packet == AM_HELLO) ? "HELLO":"REPLY", inMsg->src);
-            call NeighborDiscovery.receiveNeighbors(inMsg->packet, inMsg->src);
-         }
-         else{
-            dbg(GENERAL_CHANNEL, "Unknown Neighbor Packet Type %d\n", inMsg->packet);
-         }
+      // if(len == sizeof(sendInfo)){
+      //    sendInfo* inMsg = (sendInfo*) payload;
+      //    if(inMsg->packet.protocol == AM_HELLO || inMsg->packet.protocol == AM_REPLY){
+      //       dbg(NEIGHBOR_CHANNEL, "Received %s from %d\n", (inMsg->packet.protocol == AM_HELLO) ? "HELLO":"REPLY", inMsg->src);
+      //       call NeighborDiscovery.receiveNeighbors(inMsg->packet, inMsg->src);
+      //    }
+      //    else{
+      //       dbg(GENERAL_CHANNEL, "Unknown Neighbor Packet Type %d\n", inMsg->packet);
+      //    }
          
-         return msg;
-      }
+      //    return msg;
+      // }
       // end
       dbg(GENERAL_CHANNEL, "Unknown Packet Type %d\n", len);
       return msg;
