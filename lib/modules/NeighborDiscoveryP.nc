@@ -41,21 +41,33 @@ implementation{
         call NeighborTimer.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
-    task void findNeighbors(uint16_t destination){
-        if(!isNeighbor(destination)){
-            sendInfo* search = call Pool.get();
-            if(search == NULL){
-                return;
-            }
-
-            search->dest = destination;
-            search->src = TOS_NODE_ID;
-            search->packet.protocol = AM_HELLO;
-            search->packet.TTL = 1;
-        
-            call Queue.enqueue(search);
-            call Sender.send(TOS_NODE_ID, destination);
+    task void findNeighbors(){
+        if(isNeighbor(destination)){
+            return;
         }
+        sendInfo* info = call Pool.get();
+        if(info == NULL){
+            dbg("NeighborDiscovery", "No sendInfo available\n");
+            return;
+        }
+        pack* pkt = (pack*) call Packet.getPayload(&info->msg, sizeof(pack));
+        if(pkt == NULL){
+            dbg("NeighborDiscovery", "No payload available\n");
+            call Pool.put(info);
+            return;
+        }
+        pkt->protocol = 0;
+        pkt->src = TOS_NODE_ID;
+        pkt->dest = destination;
+        pkt->seq = 0;
+        pkt->TTL = 1;
+
+        info->dest = destination;
+        info->len = sizeof(CommandMsg);
+        info->retries = 0;
+        info->msgType = AM_PACK;
+        
+
         call NeighborTimer.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
@@ -71,23 +83,7 @@ implementation{
 
     }
 
-    // command void NeighborDiscovery.receiveNeighbors(uint16_t packet, uint16_t src){
-    //     if(packet == AM_HELLO){
-    //         sendInfo* respond = call Pool.get();
-    //         if(respond != NULL){
-    //             return;
-    //         }
-    //         respond->dest = src;
-    //         respond->src = dest;
-    //         respond->packet = AM_REPLY;
-    //         respond->TTL = 1;
-    //         call Queue.enqueue(respond);
-    //         call Sender.send(TOS_NODE_ID, src);
-    //     }
-    //     else if(packet == AM_REPLY){
-    //         if(!isNeighbor(src) && neighborCount < 20){
-    //             neighborList[neighborCount++] = src;
-    //         }
-    //     }
-    // }
+    command void NeighborDiscovery.receiveNeighbors(uint16_t packet, uint16_t src){
+    
+    }
 }

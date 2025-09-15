@@ -32,5 +32,5 @@ implementation {
     Node.CommandHandler -> CommandHandlerC;
 
     components new NeighborDiscoveryC() as NeighborD;
-    Node.NeighborDiscovery -> NeighborDiscoveryC;
+    Node.NeighborD -> NeighborDiscoveryC;
 }
