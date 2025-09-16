@@ -1,24 +1,27 @@
-// #include <Timer.h>
-// #include "../../includes/channel.h"
+#include <Timer.h>
+#include "../../includes/channels.h"
 
-// generic configuration FloodingC(){
-//     provides interface Flooding:
+generic configuration FloodingC(){
+    provides interface Flooding:
 
-// }
-// implementation{
-//     components new FloodingP();
+}
+implementation{
+    components new FloodingP();
 
-//     Flooding = FloodingP.Flooding;
+    Flooding = FloodingP.Flooding;
 
-//     components new AMReceiverC(AM_PACK) as PingReceive;
-//     components ActiveMessageC;
-
-//     FloodingP.Receive -> PingReceive;
-//     FloodingP.AMControl -> ActiveMessageC;
-
-//     components new TimerMilliC() as Timer1;
-//     components RandomC as Random;
+    components new TimerMilliC() as FloodTimer;
+    components RandomC as Random;
     
-//     FloodingP.Timer1 -> Timer1;
-//     FloodingP.Random -> Random;
-// }
+    FloodingP.FloodTimer -> FloodTimer;
+    FloodingP.Random -> Random;
+
+    components ActiveMessageC;
+    FloodingP.Packet -> ActiveMessageC;
+
+    components new HashmapC(uint16_t node, uint16_t size);
+    FloodingP.Hashmap -> HashmapC;
+
+    components new SimpleSendC(AM_PACK) as Send;
+    FloodingP.Send -> Send;
+}
