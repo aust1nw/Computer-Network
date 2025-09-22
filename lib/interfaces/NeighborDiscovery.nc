@@ -9,4 +9,6 @@ interface NeighborDiscovery{
     command void start();
     command void printNeighbors();
     command void receiveNeighbors(uint16_t protocol, uint16_t src);
+    command uint8_t getCount();
+    command uint32_t getList(uint8_t count);
 }

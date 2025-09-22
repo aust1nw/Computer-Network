@@ -33,4 +33,7 @@ implementation {
 
     components new NeighborDiscoveryC();
     Node.NeighborDiscovery -> NeighborDiscoveryC;
+
+    components new FloodingC();
+    Node.Flooding -> FloodingC;
 }

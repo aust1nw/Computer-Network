@@ -7,7 +7,7 @@
 
 interface Flooding {
     command void start();
-    command void flood(uint16_t* payload, uint16_t length);
     command void printNeighbors();
+    command void handleFlood(pack* Package, uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint8_t *msgContent);
     command void checkStatus();
 }

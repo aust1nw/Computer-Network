@@ -22,8 +22,8 @@ generic module NeighborDiscoveryP(){
 implementation{
     uint16_t neighborList[20];
     uint8_t neighborCount = 0;
-    pack sendPackage;
-    pack returnPackage;
+    pack sendPacket;
+    pack returnPacket;
     void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
     void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t *payload, uint8_t length){
@@ -56,8 +56,8 @@ implementation{
             return;
         }
         else{
-            makePack(&sendPackage, TOS_NODE_ID, destination, 0, HELLO, 0, payload, PACKET_MAX_PAYLOAD_SIZE);
-            call Sender.send(sendPackage, destination);
+            makePack(&sendPacket, TOS_NODE_ID, destination, 0, HELLO, 0, payload, PACKET_MAX_PAYLOAD_SIZE);
+            call Sender.send(sendPacket, destination);
             dbg(NEIGHBOR_CHANNEL, "Sent neighbor discovery packet from %u to %u\n", TOS_NODE_ID, destination);
         }
 
@@ -87,9 +87,16 @@ implementation{
             }
         }
         else if(protocol == 100){
-            makePack(&returnPackage, TOS_NODE_ID, src, 0, REPLY, 0, payload, PACKET_MAX_PAYLOAD_SIZE);
-            call Sender.send(returnPackage, src);
+            makePack(&returnPacket, TOS_NODE_ID, src, 0, REPLY, 0, payload, PACKET_MAX_PAYLOAD_SIZE);
+            call Sender.send(returnPacket, src);
             dbg(NEIGHBOR_CHANNEL, "Replied to neighbor discovery from %u to %u\n", TOS_NODE_ID, src);
         }
+    }
+
+    command uint8_t NeighborDiscovery.getCount(){
+        return neighborCount;
+    }
+    command uint32_t NeighborDiscovery.getList(uint8_t count){
+        return neighborList[count];
     }
 }

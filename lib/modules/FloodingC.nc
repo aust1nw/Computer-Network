@@ -2,26 +2,28 @@
 #include "../../includes/channels.h"
 
 generic configuration FloodingC(){
-    provides interface Flooding:
-
+    provides interface Flooding;
 }
+
 implementation{
-    components new FloodingP();
+    components new FloodingP() as Flood;
+    Flooding = Flood.Flooding;
 
-    Flooding = FloodingP.Flooding;
+    components new TimerMilliC() as FloodingTimer;
+    Flood.FloodingTimer -> FloodingTimer;
 
-    components new TimerMilliC() as FloodTimer;
     components RandomC as Random;
-    
-    FloodingP.FloodTimer -> FloodTimer;
-    FloodingP.Random -> Random;
+    Flood.Random -> Random;
 
     components ActiveMessageC;
-    FloodingP.Packet -> ActiveMessageC;
+    Flood.Packet -> ActiveMessageC;
 
-    components new HashmapC(uint16_t node, uint16_t size);
-    FloodingP.Hashmap -> HashmapC;
+    components new HashmapC(uint16_t, 20) as NeighborTable;
+    Flood.NeighborTable -> NeighborTable;
 
     components new SimpleSendC(AM_PACK) as Send;
-    FloodingP.Send -> Send;
+    Flood.Send -> Send;
+
+    components new NeighborDiscoveryC() as Discover;
+    Flood.Discover -> Discover;
 }

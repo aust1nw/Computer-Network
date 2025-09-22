@@ -23,6 +23,8 @@ module Node{
 
    uses interface CommandHandler;
    uses interface NeighborDiscovery;
+
+   uses interface Flooding;
 }
 
 implementation{
@@ -34,6 +36,7 @@ implementation{
    event void Boot.booted(){
       call AMControl.start();
       call NeighborDiscovery.start();
+      call Flooding.start();
 
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
@@ -55,6 +58,7 @@ implementation{
          pack* myMsg=(pack*) payload;
          dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
          call NeighborDiscovery.receiveNeighbors(myMsg->protocol, myMsg->src);
+         call Flooding.handleFlood(myMsg, myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, payload);
          return msg;
       }
 
