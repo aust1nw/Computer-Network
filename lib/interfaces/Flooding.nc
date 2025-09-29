@@ -8,5 +8,4 @@
 interface Flooding {
     command void start();
     command void handleFlood(uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint8_t *msgContent);
-    command void checkStatus();
 }

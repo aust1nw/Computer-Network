@@ -48,7 +48,7 @@ implementation{
     }
 
     command void NeighborDiscovery.start(){
-        call NeighborTimer.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
+        call NeighborTimer.startOneShot(500 + (uint16_t)(call Random.rand16()%1000));
     }
 
     task void findNeighbors(){
