@@ -1,5 +1,6 @@
 #include <Timer.h>
 #include "../../includes/channels.h"
+#include "../../includes/neighborEntry.h"
 
 generic configuration FloodingC(){
     provides interface Flooding;
@@ -18,12 +19,12 @@ implementation{
     components ActiveMessageC;
     Flood.Packet -> ActiveMessageC;
 
-    components new HashmapC(uint16_t, 20) as NeighborTable;
+    components new HashmapC(NeighborEntry, 20) as NeighborTable;
     Flood.NeighborTable -> NeighborTable;
 
     components new SimpleSendC(AM_PACK) as Send;
     Flood.Send -> Send;
 
-    components new NeighborDiscoveryC() as Discover;
-    Flood.Discover -> Discover;
+    components new NeighborDiscoveryC();
+    Flood.NeighborDiscovery -> NeighborDiscoveryC;
 }

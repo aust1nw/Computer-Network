@@ -22,8 +22,8 @@ module Node{
    uses interface SimpleSend as Sender;
 
    uses interface CommandHandler;
+   
    uses interface NeighborDiscovery;
-
    uses interface Flooding;
 }
 
@@ -57,8 +57,8 @@ implementation{
       if(len==sizeof(pack)){
          pack* myMsg=(pack*) payload;
          dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
-         call NeighborDiscovery.receiveNeighbors(myMsg->protocol, myMsg->src);
-         call Flooding.handleFlood(myMsg, myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, payload);
+         //call NeighborDiscovery.receiveNeighbors(myMsg->protocol, myMsg->src);
+         call Flooding.handleFlood(myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, payload);
          return msg;
       }
 

@@ -8,23 +8,21 @@
 generic module NeighborDiscoveryP(){
     provides interface NeighborDiscovery;
 
-    uses interface Pool<sendInfo> as Pool;
-    uses interface Queue<sendInfo*> as Queue;
-
     uses interface Timer<TMilli> as NeighborTimer;
     uses interface Random;
 
+    uses interface Packet;
+    uses interface Receive as NeighborReceive;
+
     uses interface SimpleSend as Sender;
 
-    uses interface Packet;
+    //uses interface Pool<sendInfo> as Pool;
+    //uses interface Queue<sendInfo*> as Queue;
 }
 
 implementation{
     uint16_t neighborList[20];
     uint8_t neighborCount = 0;
-    pack sendPacket;
-    pack returnPacket;
-    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
     void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t *payload, uint8_t length){
         Package->src = src;
@@ -32,6 +30,11 @@ implementation{
         Package->TTL = TTL;
         Package->seq = seq;
         Package->protocol = protocol;
+
+        if(payload != NULL && length > 0){
+            memcpy(Package->payload, payload, length);
+        }
+
     }
 
     bool isNeighbor(uint16_t nodeID){
@@ -49,14 +52,17 @@ implementation{
     }
 
     task void findNeighbors(){
+        pack sendPacket;
         uint16_t destination = AM_BROADCAST_ADDR;
         uint8_t *payload = 0;
         uint16_t HELLO = 100;
-        if(isNeighbor(destination)){
+        uint16_t nTTL = 0;
+        uint16_t nSeq = 0;
+        if(isNeighbor(destination) && destination != TOS_NODE_ID){
             return;
         }
         else{
-            makePack(&sendPacket, TOS_NODE_ID, destination, 0, HELLO, 0, payload, PACKET_MAX_PAYLOAD_SIZE);
+            makePack(&sendPacket, TOS_NODE_ID, destination, nTTL, HELLO, nSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
             call Sender.send(sendPacket, destination);
             dbg(NEIGHBOR_CHANNEL, "Sent neighbor discovery packet from %u to %u\n", TOS_NODE_ID, destination);
         }
@@ -70,33 +76,53 @@ implementation{
 
     command void NeighborDiscovery.printNeighbors(){    
         uint8_t i;
-        for (i = 0; i < neighborCount; i++) {
+        for(i = 0; i < neighborCount; i++){
             dbg(NEIGHBOR_CHANNEL, "Neighbor %u: %u\n", i, neighborList[i]);
         }
-
     }
 
-    command void NeighborDiscovery.receiveNeighbors(uint16_t protocol, uint16_t src){
+    command void NeighborDiscovery.receiveNeighbors(uint16_t protocol, uint16_t src, uint8_t *idx){
+        pack returnPacket;
         uint16_t REPLY = 101;
         uint8_t *payload = 0;
+        uint16_t repTTL = 0;
+        uint16_t repSeq = 0;
         if(protocol == 101){
-            if(!isNeighbor(src) && neighborCount < 20){
-                neighborList[neighborCount] = src;
-                neighborCount++;
+            if(!isNeighbor(src) && *idx < 20){
+                neighborList[*idx] = src;
+                (*idx)++;
                 dbg(NEIGHBOR_CHANNEL, "Discovered new neighbor: %u\n", src);
             }
         }
         else if(protocol == 100){
-            makePack(&returnPacket, TOS_NODE_ID, src, 0, REPLY, 0, payload, PACKET_MAX_PAYLOAD_SIZE);
+            if(!isNeighbor(src) && *idx < 20){
+                neighborList[*idx] = src;
+                (*idx)++;
+            }
+            makePack(&returnPacket, TOS_NODE_ID, src, repTTL, REPLY, repSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
             call Sender.send(returnPacket, src);
             dbg(NEIGHBOR_CHANNEL, "Replied to neighbor discovery from %u to %u\n", TOS_NODE_ID, src);
         }
+        else {
+            dbg(NEIGHBOR_CHANNEL, "Unknown protocol %u from %u\n", protocol, src);
+        }
+    }
+
+    event message_t* NeighborReceive.receive(message_t* msg, void* payload, uint8_t len){
+        if(len==sizeof(pack)){
+            pack* myMsg=(pack*) payload;
+            call NeighborDiscovery.receiveNeighbors(myMsg->protocol, myMsg->src, &neighborCount);
+        }
+        return msg;
     }
 
     command uint8_t NeighborDiscovery.getCount(){
         return neighborCount;
     }
     command uint32_t NeighborDiscovery.getList(uint8_t count){
-        return neighborList[count];
+        if(count < neighborCount){
+            return neighborList[count];
+        }
+        return 0;
     }
 }

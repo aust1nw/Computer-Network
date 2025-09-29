@@ -4,6 +4,7 @@
 #include "../../includes/CommandMsg.h"
 #include "../../includes/sendinfo.h"
 #include "../../includes/channels.h"
+#include "../../includes/neighborEntry.h"
 
 generic module FloodingP(){
     provides interface Flooding;
@@ -11,97 +12,154 @@ generic module FloodingP(){
     uses interface Timer<TMilli> as FloodingTimer;
     uses interface Random;
 
-    uses interface SimpleSend as Send;
-    uses interface NeighborDiscovery as Discover;
-
     uses interface Packet;
-    uses interface Hashmap<uint16_t> as NeighborTable;
+    uses interface Hashmap<NeighborEntry> as NeighborTable;
+
+    uses interface SimpleSend as Send;
+    uses interface NeighborDiscovery;
 }
 
 implementation{
-    uint16_t seqNum = 0;
-    pack sendPacket;
-    pack returnPacket;
+    uint16_t seqNum = 1;
 
-    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t *payload, uint8_t length);
-    
     void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t *payload, uint8_t length){
         Package->src = src;
         Package->dest = dest;
         Package->TTL = TTL;
         Package->seq = seq;
         Package->protocol = protocol;
+
+        if(payload != NULL && length > 0){
+            memcpy(Package->payload, payload, length);
+        }
     }
 
     bool hasCache(uint16_t nodeID, uint16_t seq){
-        // check NeighborTable with nodeID key, if has value seqNum
-        if(call NeighborTable.contains(nodeID)){
-            uint16_t lastSeq = call NeighborTable.get(nodeID);
-            if(lastSeq == seq){
+        NeighborEntry entry;
+        uint8_t i;
+
+        if(!call NeighborTable.contains(nodeID)){
+            return FALSE;
+        }
+        entry = call NeighborTable.get(nodeID);
+        
+        for(i = 0; i < entry.count; i++){
+            if(entry.seq[i] == seq){
                 return TRUE;
             }
         }
         return FALSE;
     }
 
-    command void Flooding.start(){
-        uint8_t i;
-        uint8_t count = call Discover.getCount();
+    void updSeq(uint16_t *seq){
+        (*seq)++;
+    }
 
-        for(i = 0; i < count; i++){
-            uint32_t neighbor = call Discover.getList(i);
-            call NeighborTable.insert(neighbor, -1);
+    NeighborEntry updCache(uint16_t src, uint16_t seq){
+        NeighborEntry editEntry;
+        uint8_t it;
+        
+        if(call NeighborTable.contains(src)){
+            editEntry = call NeighborTable.get(src);
+        }
+        else{
+            editEntry.count = 0;
         }
 
+        it = editEntry.count % 10;
+        editEntry.seq[it] = seq;
+        
+        if(editEntry.count < 10){
+            editEntry.count++;
+        }
+
+        return editEntry;
+    }
+
+    command void Flooding.start(){
         call FloodingTimer.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
     task void floodNeighbors(){
+        pack sendPacket;
         uint8_t *payload = 0;
         uint16_t SEND = 0;
         uint16_t source = TOS_NODE_ID;
-        uint16_t destination = AM_BROADCAST_ADDR;
-        // check if destination has cache by checking NeighborTable if the node has the seqNum already
-        if(hasCache(destination, seqNum)){
-            return;
-        }
-        else{
-            makePack(&sendPacket, source, destination, 15, SEND, seqNum, payload, PACKET_MAX_PAYLOAD_SIZE);
-            call Send.send(sendPacket, destination);
+        uint32_t *keys = call NeighborTable.getKeys();
+        uint16_t count = call NeighborTable.size();
+        uint8_t i;
+
+        dbg(FLOODING_CHANNEL, "Node %u preparing to flood seq %u to %u neighbors\n", TOS_NODE_ID, seqNum, count);
+
+        for(i = 0; i < count; i++){
+            uint16_t destination = (uint16_t)keys[i];
+            if(!hasCache(destination, seqNum)){
+                makePack(&sendPacket, source, destination, MAX_TTL, SEND, seqNum, payload, PACKET_MAX_PAYLOAD_SIZE);
+                call Send.send(sendPacket, destination);
+                dbg(FLOODING_CHANNEL, "%u has flooded to %u\n", TOS_NODE_ID, destination);
+            }
+            else{
+                dbg(FLOODING_CHANNEL, "Skipped flooding to %u: already has seq %u\n", destination, seqNum);
+            }
         }
 
-        seqNum += 1;
+        updSeq(&seqNum);
+
+        call FloodingTimer.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
     event void FloodingTimer.fired(){
-        post floodNeighbors();
+        uint8_t numNeighbors = call NeighborDiscovery.getCount();
+        uint8_t i;
+        if(numNeighbors > 0){
+            for(i = 0; i < numNeighbors; i++){
+                uint32_t neighbor = call NeighborDiscovery.getList(i);
+                if(!call NeighborTable.contains(neighbor)){
+                    NeighborEntry newEntry;
+                    newEntry.count = 0;
+                    call NeighborTable.insert(neighbor, newEntry);
+                    dbg(FLOODING_CHANNEL, "Inserted neighbor %u into the table\n", neighbor);
+                }
+            }
+            dbg(FLOODING_CHANNEL, "Ready to Flood\n");
+            post floodNeighbors();
+        }
+        else{
+            call FloodingTimer.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
+        }
     }
 
-    command void Flooding.printNeighbors(){
-        // not sure if needed
-    }
-
-    command void Flooding.handleFlood(pack* Package, uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint8_t *msgContent){
-        // will be connected through Node.nc
+    command void Flooding.handleFlood(uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint8_t *msgContent){
+        NeighborEntry entry;
+        pack returnPacket;
+        pack floodPack;
         uint16_t RECEIVED = 1;
         uint8_t *payload = 0;
+        uint32_t *keys = call NeighborTable.getKeys();
+        uint16_t count = call NeighborTable.size();
+        uint16_t returnTTL = 1;
+        uint16_t returnSeq = 0;
+        uint8_t i;
         if(protocol == 1){
-            // update NeighborTable cache for neighbors
-            call NeighborTable.insert(src, seq);
+            call NeighborTable.insert(src, updCache(src, seq));
+            dbg(FLOODING_CHANNEL, "%u received a reply from %u\n", TOS_NODE_ID, src);
         }
         else if(protocol == 0){
-            // update NeighborTable cache for source node
-            if(hasCache(AM_BROADCAST_ADDR, seq) || TTL == 0){
-                return;
-            }
-            else{
-                uint16_t newTTL = TTL - 1;
-                makePack(Package, src, AM_BROADCAST_ADDR, newTTL, protocol, seq, msgContent, PACKET_MAX_PAYLOAD_SIZE);
-                call Send.send(*Package, AM_BROADCAST_ADDR);
-            }
-            makePack(&returnPacket, TOS_NODE_ID, src, 0, RECEIVED, 0, payload, PACKET_MAX_PAYLOAD_SIZE);
+            call NeighborTable.insert(src, updCache(src, seq));
+            makePack(&returnPacket, TOS_NODE_ID, src, returnTTL, RECEIVED, returnSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
             call Send.send(returnPacket, src);
-            call NeighborTable.insert(src, seq);
+            dbg(FLOODING_CHANNEL, "%u has replied to %u\n", TOS_NODE_ID, src);
+            // check neighborCache and TTL before flooding some more
+            for(i = 0; i < count; i++){
+                uint16_t destination = (uint16_t)keys[i];
+                if(!hasCache(destination, seq) && TTL > 0){
+                    uint16_t newTTL = TTL - 1;
+                    makePack(&floodPack, TOS_NODE_ID, destination, newTTL, protocol, seq, msgContent, PACKET_MAX_PAYLOAD_SIZE);
+                    call Send.send(floodPack, destination);
+                    dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq: %u\n", TOS_NODE_ID, destination, seq);
+                }
+            }
+             
         }
     }
 
