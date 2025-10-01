@@ -64,7 +64,7 @@ implementation{
 
         statEntry = call NeighborTable.get(nodeID);
 
-        if(statEntry.average <= 70){
+        if(statEntry.numReceived > 5 && statEntry.average <= 50){
             return FALSE;
         }
         return TRUE;
