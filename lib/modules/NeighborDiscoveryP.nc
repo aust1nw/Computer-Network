@@ -118,7 +118,6 @@ implementation{
             dbg(NEIGHBOR_CHANNEL, "Unknown protocol %u from %u\n", protocol, src);
             return;
         }
-        call NeighborDiscovery.printNeighbors();
     }
 
     command uint8_t NeighborDiscovery.getCount(){
