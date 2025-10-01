@@ -16,9 +16,6 @@ implementation{
     components new TimerMilliC() as FloodingTimer2;
     Flood.FloodingTimer2 -> FloodingTimer2;
 
-    // components LocalTimeMilliC;
-    // Flood.LocalTime -> LocalTimeMilliC;
-
     components RandomC as Random;
     Flood.Random -> Random;
 

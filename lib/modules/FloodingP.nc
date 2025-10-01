@@ -11,7 +11,6 @@ generic module FloodingP(){
     
     uses interface Timer<TMilli> as FloodingTimer1;
     uses interface Timer<TMilli> as FloodingTimer2;
-    // uses interface LocalTime<TMilli>;
     uses interface Random;
 
     uses interface Packet;
@@ -58,18 +57,12 @@ implementation{
 
     bool isActive(uint16_t nodeID){
         NeighborEntry statEntry;
-        // uint32_t now;
 
         if(!call NeighborTable.contains(nodeID)){
             return FALSE;
         }
 
         statEntry = call NeighborTable.get(nodeID);
-        // now = call LocalTime.get();
-        
-        // if(now - statEntry.lastHeard > 10000){
-        //     return FALSE;
-        // }
 
         if(statEntry.average <= 70){
             return FALSE;
@@ -92,6 +85,7 @@ implementation{
     NeighborEntry updEntry(uint16_t entry, uint16_t seq, uint16_t protocol){
         NeighborEntry editEntry;
         uint8_t it;
+
         if(call NeighborTable.contains(entry)){
             editEntry = call NeighborTable.get(entry);
         }
@@ -123,8 +117,6 @@ implementation{
         else{
             editEntry.average = 0;
         }
-
-        // editEntry.lastHeard = call LocalTime.get();
 
         return editEntry;
     }
@@ -177,7 +169,6 @@ implementation{
                     newEntry.numReceived = 0;
                     newEntry.numReplied = 0;
                     newEntry.average = 100;
-                    // newEntry.lastHeard = call LocalTime.get();
                     call NeighborTable.insert(neighbor, newEntry);
                     dbg(FLOODING_CHANNEL, "Inserted %u into the table\n", neighbor);
                 }

@@ -15,9 +15,6 @@ generic module NeighborDiscoveryP(){
     uses interface Receive as NeighborReceive;
 
     uses interface SimpleSend as Sender;
-
-    //uses interface Pool<sendInfo> as Pool;
-    //uses interface Queue<sendInfo*> as Queue;
 }
 
 implementation{

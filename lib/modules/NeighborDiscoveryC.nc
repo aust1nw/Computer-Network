@@ -25,10 +25,4 @@ implementation {
 
     components new SimpleSendC(AM_FLOODING) as Sender;
     NeighborD.Sender -> Sender;
-    
-
-    //components new PoolC(sendInfo, 20) as Pool;
-    //components new QueueC(sendInfo*, 20) as Queue;
-    //NeighborD.Pool -> Pool;
-    //NeighborD.Queue -> Queue;
 }
