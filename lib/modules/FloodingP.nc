@@ -212,7 +212,7 @@ implementation{
             dbg(FLOODING_CHANNEL, "%u received a reply from %u\n", TOS_NODE_ID, src);
         }
         else if(protocol == 0){
-            call NeighborTable.insert(src, updEntry(src, seq, 1));
+            call NeighborTable.insert(src, updEntry(src, seq, RECEIVED));
             makePack(&returnPacket, TOS_NODE_ID, src, returnTTL, RECEIVED, returnSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
             call Send.send(returnPacket, src);
             dbg(FLOODING_CHANNEL, "%u has replied to %u\n", TOS_NODE_ID, src);
