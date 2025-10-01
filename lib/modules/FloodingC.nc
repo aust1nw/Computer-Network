@@ -19,10 +19,13 @@ implementation{
     components ActiveMessageC;
     Flood.Packet -> ActiveMessageC;
 
+    components new AMReceiverC(AM_FLOODING) as FloodReceive;
+    Flood.FloodReceive -> FloodReceive;
+
     components new HashmapC(NeighborEntry, 20) as NeighborTable;
     Flood.NeighborTable -> NeighborTable;
 
-    components new SimpleSendC(AM_PACK) as Send;
+    components new SimpleSendC(AM_FLOODING) as Send;
     Flood.Send -> Send;
 
     components new NeighborDiscoveryC();

@@ -13,6 +13,8 @@ generic module FloodingP(){
     uses interface Random;
 
     uses interface Packet;
+    uses interface Receive as FloodReceive;
+    
     uses interface Hashmap<NeighborEntry> as NeighborTable;
 
     uses interface SimpleSend as Send;
@@ -39,18 +41,28 @@ implementation{
     bool hasCache(uint16_t nodeID, uint16_t seq){
         NeighborEntry entry;
         uint8_t i;
-
         if(!call NeighborTable.contains(nodeID)){
             return FALSE;
         }
         entry = call NeighborTable.get(nodeID);
-        
         for(i = 0; i < entry.count; i++){
             if(entry.seq[i] == seq){
                 return TRUE;
             }
         }
         return FALSE;
+    }
+
+    bool isActive(uint16_t nodeID){
+        NeighborEntry statEntry;
+        if(!call NeighborTable.contains(nodeID)){
+            return FALSE;
+        }
+        statEntry = call NeighborTable.get(nodeID);
+        if(statEntry.numReceived < 5 && statEntry.average < 70){
+            return FALSE;
+        }
+        return TRUE;
     }
     
     void updCount1(uint8_t* count){
@@ -68,21 +80,17 @@ implementation{
     NeighborEntry updEntry(uint16_t entry, uint16_t seq, uint16_t protocol){
         NeighborEntry editEntry;
         uint8_t it;
-        
         if(call NeighborTable.contains(entry)){
             editEntry = call NeighborTable.get(entry);
         }
         else{
             editEntry.count = 0;
         }
-
         it = editEntry.count % 10;
         editEntry.seq[it] = seq;
-        
         if(editEntry.count < 10){
             editEntry.count++;
         }
-
         if(protocol == 0){
             editEntry.numReceived++;
         }
@@ -92,26 +100,13 @@ implementation{
         else{
             dbg(FLOODING_CHANNEL, "Invalid protocol\n");
         }
-
-        editEntry.average = editEntry.numReplied/editEntry.numReceived;
-
+        if(editEntry.numReceived > 0){
+            editEntry.average = (100*editEntry.numReplied)/editEntry.numReceived;
+        } 
+        else{
+            editEntry.average = 0;
+        }
         return editEntry;
-    }
-
-    bool isActive(uint16_t nodeID){
-        NeighborEntry statEntry;
-
-        if(!call NeighborTable.contains(nodeID)){
-            return FALSE;
-        }
-
-        statEntry = NeighborTable.get(nodeID);
-
-        if(statEntry.average > 0.8){
-            return TRUE;
-        }
-
-        return FALSE;
     }
 
     command void Flooding.start(){
@@ -138,7 +133,7 @@ implementation{
                 dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, destination, seqNum);
             }
             else{
-                dbg(FLOODING_CHANNEL, "Skipped flooding to %u: already has seq %u\n", destination, seqNum);
+                dbg(FLOODING_CHANNEL, "Skipped flooding for %u; already has seq %u\n", destination, seqNum);
             }
         }
 
@@ -163,20 +158,28 @@ implementation{
                     newEntry.numReplied = 0;
                     newEntry.average = 1;
                     call NeighborTable.insert(neighbor, newEntry);
-                    dbg(FLOODING_CHANNEL, "Inserted neighbor %u into the table\n", neighbor);
+                    dbg(FLOODING_CHANNEL, "Inserted %u into the table\n", neighbor);
                 }
             }
-            // dbg(FLOODING_CHANNEL, "Ready to Flood\n");
+            dbg(FLOODING_CHANNEL, "Ready to Flood\n");
             post floodNeighbors();
         }
         else{
             updCount2(&lastCount, numNeighbors);
-            call Flooding.start();
+            call FloodingTimer.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
         }
     }
 
+    event message_t* FloodReceive.receive(message_t* msg, void* payload, uint8_t len){
+        if(len==sizeof(pack)){
+            pack* myMsg=(pack*) payload;
+            call Flooding.handleFlood(myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, payload);
+            return msg;
+        }
+        return msg;
+    }
+
     command void Flooding.handleFlood(uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint8_t *msgContent){
-        NeighborEntry entry;
         pack returnPacket;
         pack floodPack;
         uint16_t RECEIVED = 1;
@@ -185,7 +188,6 @@ implementation{
         uint16_t count = call NeighborTable.size();
         uint16_t returnTTL = 1;
         uint16_t returnSeq = 0;
-        uint16_t avg;
         uint8_t i;
         if(protocol == 1){
             call NeighborTable.insert(src, updEntry(src, seq, protocol));
@@ -196,18 +198,24 @@ implementation{
             makePack(&returnPacket, TOS_NODE_ID, src, returnTTL, RECEIVED, returnSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
             call Send.send(returnPacket, src);
             dbg(FLOODING_CHANNEL, "%u has replied to %u\n", TOS_NODE_ID, src);
-            // check neighborCache and TTL before flooding some more
             for(i = 0; i < count; i++){
                 uint16_t destination = (uint16_t)keys[i];
-                if(!hasCache(destination, seq) && TTL > 0){
+                if(!hasCache(destination, seq) && TTL > 0 && isActive(destination)){
                     uint16_t newTTL = TTL - 1;
                     call NeighborTable.insert(src, updEntry(destination, seq, protocol));
                     makePack(&floodPack, TOS_NODE_ID, destination, newTTL, protocol, seq, msgContent, PACKET_MAX_PAYLOAD_SIZE);
                     call Send.send(floodPack, destination);
-                    dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq: %u\n", TOS_NODE_ID, destination, seq);
+                    dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, destination, seq);
+                }
+                else{
+                    dbg(FLOODING_CHANNEL, "Skipped flooding to %u; already has seq %u\n", destination, seq);
+                    dbg(FLOODING_CHANNEL, "Is %u active? TRUE=1 FALSE=0; result = %d\n", destination, isActive(destination));
                 }
             }
-             
+        }
+        else{
+            dbg(FLOODING_CHANNEL, "Unknown protocol\n");
+            return;
         }
     }
 }

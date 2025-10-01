@@ -4,9 +4,9 @@
 typedef struct{
     uint8_t count;
     uint16_t seq[10];
-    float(uint16_t) numReceived;
-    float(uint16_t) numReplied;
-    float(uint16_t) average;
+    uint16_t numReceived;
+    uint16_t numReplied;
+    uint16_t average;
 }NeighborEntry;
 
 #endif
