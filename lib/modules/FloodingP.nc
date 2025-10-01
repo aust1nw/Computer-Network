@@ -9,7 +9,9 @@
 generic module FloodingP(){
     provides interface Flooding;
     
-    uses interface Timer<TMilli> as FloodingTimer;
+    uses interface Timer<TMilli> as FloodingTimer1;
+    uses interface Timer<TMilli> as FloodingTimer2;
+    // uses interface LocalTime<TMilli>;
     uses interface Random;
 
     uses interface Packet;
@@ -25,6 +27,7 @@ implementation{
     uint16_t seqNum = 1;
     uint8_t lastCount = 0;
     uint8_t stableCount = 0;
+    bool ready = FALSE;
 
     void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t *payload, uint8_t length){
         Package->src = src;
@@ -55,11 +58,20 @@ implementation{
 
     bool isActive(uint16_t nodeID){
         NeighborEntry statEntry;
+        // uint32_t now;
+
         if(!call NeighborTable.contains(nodeID)){
             return FALSE;
         }
+
         statEntry = call NeighborTable.get(nodeID);
-        if(statEntry.numReceived < 5 && statEntry.average < 70){
+        // now = call LocalTime.get();
+        
+        // if(now - statEntry.lastHeard > 10000){
+        //     return FALSE;
+        // }
+
+        if(statEntry.average <= 70){
             return FALSE;
         }
         return TRUE;
@@ -85,9 +97,14 @@ implementation{
         }
         else{
             editEntry.count = 0;
+            editEntry.numReceived = 0;
+            editEntry.numReplied = 0;
+            editEntry.average = 100;
         }
+        
         it = editEntry.count % 10;
         editEntry.seq[it] = seq;
+
         if(editEntry.count < 10){
             editEntry.count++;
         }
@@ -106,11 +123,14 @@ implementation{
         else{
             editEntry.average = 0;
         }
+
+        // editEntry.lastHeard = call LocalTime.get();
+
         return editEntry;
     }
 
     command void Flooding.start(){
-        call FloodingTimer.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
+        call FloodingTimer1.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
     task void floodNeighbors(){
@@ -139,10 +159,10 @@ implementation{
 
         updSeq(&seqNum);
 
-        call FloodingTimer.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
+        call FloodingTimer2.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
-    event void FloodingTimer.fired(){
+    event void FloodingTimer1.fired(){
         uint8_t numNeighbors = call NeighborDiscovery.getCount();
         uint8_t i;
         if(lastCount == numNeighbors){
@@ -156,18 +176,24 @@ implementation{
                     newEntry.count = 0;
                     newEntry.numReceived = 0;
                     newEntry.numReplied = 0;
-                    newEntry.average = 1;
+                    newEntry.average = 100;
+                    // newEntry.lastHeard = call LocalTime.get();
                     call NeighborTable.insert(neighbor, newEntry);
                     dbg(FLOODING_CHANNEL, "Inserted %u into the table\n", neighbor);
                 }
             }
+            ready = TRUE;
             dbg(FLOODING_CHANNEL, "Ready to Flood\n");
             post floodNeighbors();
         }
         else{
             updCount2(&lastCount, numNeighbors);
-            call FloodingTimer.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
+            call FloodingTimer1.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
         }
+    }
+
+    event void FloodingTimer2.fired(){
+        post floodNeighbors();
     }
 
     event message_t* FloodReceive.receive(message_t* msg, void* payload, uint8_t len){
@@ -187,29 +213,33 @@ implementation{
         uint32_t *keys = call NeighborTable.getKeys();
         uint16_t count = call NeighborTable.size();
         uint16_t returnTTL = 1;
-        uint16_t returnSeq = 0;
+        uint16_t returnSeq = seq;
         uint8_t i;
+        
         if(protocol == 1){
             call NeighborTable.insert(src, updEntry(src, seq, protocol));
             dbg(FLOODING_CHANNEL, "%u received a reply from %u\n", TOS_NODE_ID, src);
         }
         else if(protocol == 0){
-            call NeighborTable.insert(src, updEntry(src, seq, protocol));
+            call NeighborTable.insert(src, updEntry(src, seq, 1));
             makePack(&returnPacket, TOS_NODE_ID, src, returnTTL, RECEIVED, returnSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
             call Send.send(returnPacket, src);
             dbg(FLOODING_CHANNEL, "%u has replied to %u\n", TOS_NODE_ID, src);
             for(i = 0; i < count; i++){
                 uint16_t destination = (uint16_t)keys[i];
+                
+                if (destination == src) continue;
+
                 if(!hasCache(destination, seq) && TTL > 0 && isActive(destination)){
                     uint16_t newTTL = TTL - 1;
-                    call NeighborTable.insert(src, updEntry(destination, seq, protocol));
+                    call NeighborTable.insert(destination, updEntry(destination, seq, protocol));
                     makePack(&floodPack, TOS_NODE_ID, destination, newTTL, protocol, seq, msgContent, PACKET_MAX_PAYLOAD_SIZE);
                     call Send.send(floodPack, destination);
                     dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, destination, seq);
                 }
                 else{
                     dbg(FLOODING_CHANNEL, "Skipped flooding to %u; already has seq %u\n", destination, seq);
-                    dbg(FLOODING_CHANNEL, "Is %u active? TRUE=1 FALSE=0; result = %d\n", destination, isActive(destination));
+                    dbg(FLOODING_CHANNEL, "Destination %u active status: %s\n", destination, isActive(destination) ? "ACTIVE" : "INACTIVE");
                 }
             }
         }

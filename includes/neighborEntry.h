@@ -7,6 +7,7 @@ typedef struct{
     uint16_t numReceived;
     uint16_t numReplied;
     uint16_t average;
+    uint32_t lastHeard;
 }NeighborEntry;
 
 #endif

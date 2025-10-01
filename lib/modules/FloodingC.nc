@@ -10,8 +10,14 @@ implementation{
     components new FloodingP() as Flood;
     Flooding = Flood.Flooding;
 
-    components new TimerMilliC() as FloodingTimer;
-    Flood.FloodingTimer -> FloodingTimer;
+    components new TimerMilliC() as FloodingTimer1;
+    Flood.FloodingTimer1 -> FloodingTimer1;
+
+    components new TimerMilliC() as FloodingTimer2;
+    Flood.FloodingTimer2 -> FloodingTimer2;
+
+    // components LocalTimeMilliC;
+    // Flood.LocalTime -> LocalTimeMilliC;
 
     components RandomC as Random;
     Flood.Random -> Random;
