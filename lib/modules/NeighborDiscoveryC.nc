@@ -20,9 +20,9 @@ implementation {
     components ActiveMessageC;
     NeighborD.Packet -> ActiveMessageC;
 
-    components new AMReceiverC(AM_FLOODING) as NeighborReceive;
+    components new AMReceiverC(AM_PACK) as NeighborReceive;
     NeighborD.NeighborReceive -> NeighborReceive;
 
-    components new SimpleSendC(AM_FLOODING) as Sender;
+    components new SimpleSendC(AM_PACK) as Sender;
     NeighborD.Sender -> Sender;
 }

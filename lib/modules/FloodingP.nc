@@ -10,11 +10,11 @@ generic module FloodingP(){
     provides interface Flooding;
     
     uses interface Timer<TMilli> as FloodingTimer1;
-    uses interface Timer<TMilli> as FloodingTimer2;
+    // uses interface Timer<TMilli> as FloodingTimer2;
     uses interface Random;
 
     uses interface Packet;
-    uses interface Receive as FloodReceive;
+    // uses interface Receive as FloodReceive;
     
     uses interface Hashmap<NeighborEntry> as NeighborTable;
 
@@ -67,6 +67,7 @@ implementation{
         if(statEntry.numReceived > 5 && statEntry.average <= 70){
             return FALSE;
         }
+
         return TRUE;
     }
     
@@ -78,8 +79,11 @@ implementation{
         *count1 = count2;
     }
     
-    void updSeq(uint16_t* seq){
+    void updSeq1(uint16_t* seq){
         (*seq)++;
+    }
+    void updSeq2(uint16_t* curSeq, uint16_t prevSeq){
+        *curSeq = prevSeq;
     }
 
     NeighborEntry updEntry(uint16_t entry, uint16_t seq, uint16_t protocol){
@@ -122,35 +126,34 @@ implementation{
     }
 
     command void Flooding.start(){
-        call FloodingTimer1.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
+        call FloodingTimer1.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
-    task void floodNeighbors(){
+    command void Flooding.floodNeighbors(uint16_t destination, uint8_t *payload){
         pack sendPacket;
-        uint8_t *payload = 0;
         uint16_t source = TOS_NODE_ID;
         uint32_t *keys = call NeighborTable.getKeys();
         uint16_t count = call NeighborTable.size();
         uint8_t i;
 
-        dbg(FLOODING_CHANNEL, "Node %u preparing to flood seq %u to %u neighbors\n", TOS_NODE_ID, seqNum, count);
+        // dbg(FLOODING_CHANNEL, "Node %u preparing to flood seq %u to %u neighbors\n", TOS_NODE_ID, seqNum, count);
 
         for(i = 0; i < count; i++){
-            uint16_t destination = (uint16_t)keys[i];
-            if(!hasCache(destination, seqNum)){
+            uint16_t neighbor = (uint16_t)keys[i];
+            if(!hasCache(neighbor, seqNum) && isActive(neighbor)){
                 makePack(&sendPacket, source, destination, MAX_TTL, PROTOCOL_PING, seqNum, payload, PACKET_MAX_PAYLOAD_SIZE);
-                call Send.send(sendPacket, destination);
-                call NeighborTable.insert(destination, updEntry(destination, seqNum, PROTOCOL_PING));
-                dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, destination, seqNum);
+                call Send.send(sendPacket, neighbor);
+                call NeighborTable.insert(neighbor, updEntry(neighbor, seqNum, PROTOCOL_PING));
+                dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, neighbor, seqNum);
             }
             else{
-                dbg(FLOODING_CHANNEL, "Skipped flooding for %u; already has seq %u\n", destination, seqNum);
+                dbg(FLOODING_CHANNEL, "Skipped flooding for %u; already has seq %u\n", neighbor, seqNum);
             }
         }
 
-        updSeq(&seqNum);
+        updSeq1(&seqNum);
 
-        call FloodingTimer2.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
+        // call FloodingTimer2.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
     event void FloodingTimer1.fired(){
@@ -169,33 +172,33 @@ implementation{
                     newEntry.numReplied = 0;
                     newEntry.average = 100;
                     call NeighborTable.insert(neighbor, newEntry);
-                    dbg(FLOODING_CHANNEL, "Inserted %u into the table\n", neighbor);
+                    // dbg(FLOODING_CHANNEL, "Inserted %u into the table\n", neighbor);
                 }
             }
             ready = TRUE;
-            dbg(FLOODING_CHANNEL, "Ready to Flood\n");
-            post floodNeighbors();
+            // dbg(FLOODING_CHANNEL, "Ready to Flood\n");
+            // post floodNeighbors();
+            return;
         }
         else{
             updCount2(&lastCount, numNeighbors);
-            call FloodingTimer1.startOneShot(1000 + (uint16_t)(call Random.rand16()%1000));
         }
     }
 
-    event void FloodingTimer2.fired(){
-        post floodNeighbors();
-    }
+    // event void FloodingTimer2.fired(){
+    //     post floodNeighbors();
+    // }
 
-    event message_t* FloodReceive.receive(message_t* msg, void* payload, uint8_t len){
-        if(len==sizeof(pack)){
-            pack* myMsg=(pack*) payload;
-            call Flooding.handleFlood(myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, payload);
-            return msg;
-        }
-        return msg;
-    }
+    // event message_t* FloodReceive.receive(message_t* msg, void* payload, uint8_t len){
+    //     if(len==sizeof(pack)){
+    //         pack* myMsg=(pack*) payload;
+    //         call Flooding.handleFlood(myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, payload);
+    //         return msg;
+    //     }
+    //     return msg;
+    // }
 
-    command void Flooding.handleFlood(uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint8_t *msgContent){
+    command void Flooding.handleFlood(uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint16_t destination, uint8_t *msgContent){
         pack returnPacket;
         pack floodPack;
         uint8_t *payload = 0;
@@ -215,29 +218,33 @@ implementation{
             call Send.send(returnPacket, src);
             dbg(FLOODING_CHANNEL, "%u has replied to %u\n", TOS_NODE_ID, src);
             if(seq >= seqNum){
-                updCount2(&seqNum, seq);
-                updSeq(&seqNum);
+                updSeq2(&seqNum, seq);
+                updSeq1(&seqNum);
+            }
+            if(TOS_NODE_ID == destination){
+                dbg(FLOODING_CHANNEL, "Success\n");
+                return;
             }
             for(i = 0; i < count; i++){
-                uint16_t destination = (uint16_t)keys[i];
+                uint16_t neighbor = (uint16_t)keys[i];
                 
-                if (destination == src) continue;
+                if (neighbor == src) continue;
 
-                if(!hasCache(destination, seq) && TTL > 0 && isActive(destination)){
+                if(!hasCache(neighbor, seq) && TTL > 0 && isActive(neighbor)){
                     uint16_t newTTL = TTL - 1;
-                    call NeighborTable.insert(destination, updEntry(destination, seq, protocol));
+                    call NeighborTable.insert(neighbor, updEntry(neighbor, seq, protocol));
                     makePack(&floodPack, TOS_NODE_ID, destination, newTTL, protocol, seq, msgContent, PACKET_MAX_PAYLOAD_SIZE);
-                    call Send.send(floodPack, destination);
-                    dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, destination, seq);
+                    call Send.send(floodPack, neighbor);
+                    dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, neighbor, seq);
                 }
                 else{
-                    dbg(FLOODING_CHANNEL, "Skipped flooding to %u; already has seq %u or is inactive.\n", destination, seq);
-                    dbg(FLOODING_CHANNEL, "Destination %u active status: %s\n", destination, isActive(destination) ? "ACTIVE" : "INACTIVE");
+                    dbg(FLOODING_CHANNEL, "Skipped flooding to %u; already has seq %u or is inactive.\n", neighbor, seq);
+                    dbg(FLOODING_CHANNEL, "Destination %u active status: %s\n", neighbor, isActive(neighbor) ? "ACTIVE" : "INACTIVE");
                 }
             }
         }
         else{
-            dbg(FLOODING_CHANNEL, "Unknown protocol\n");
+            // dbg(FLOODING_CHANNEL, "Unknown protocol\n");
             return;
         }
     }

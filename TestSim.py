@@ -131,18 +131,26 @@ class TestSim:
 
 def main():
     s = TestSim();
-    s.runTime(10);
+    s.runTime(20);
     s.loadTopo("long_line.topo");
     s.loadNoise("no_noise.txt");
     s.bootAll();
-    s.addChannel(s.COMMAND_CHANNEL);
-    s.addChannel(s.GENERAL_CHANNEL);
+    #s.addChannel(s.COMMAND_CHANNEL);
+    #s.addChannel(s.GENERAL_CHANNEL);
+    s.addChannel(s.NEIGHBOR_CHANNEL);
+    s.addChannel(s.FLOODING_CHANNEL);
 
-    s.runTime(20);
-    s.ping(1, 2, "Hello, World");
     s.runTime(10);
-    s.ping(1, 3, "Hi!");
-    s.runTime(20);
+    s.neighborDMP(5);
+    s.runTime(10);
+    s.ping(3, 18, "Test 1");
+    s.runTime(30);
+    s.moteOff(5);
+    s.runTime(10);
+    s.ping(4, 7, "Test 2");
+    s.runTime(30);
+    s.neighborDMP(6);
+    s.runTime(30);
 
 if __name__ == '__main__':
     main()

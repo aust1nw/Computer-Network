@@ -57,7 +57,7 @@ implementation{
         
         makePack(&sendPacket, TOS_NODE_ID, destination, nTTL, PROTOCOL_NEIGHBORPING, nSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
         call Sender.send(sendPacket, destination);
-        dbg(NEIGHBOR_CHANNEL, "Sent neighbor discovery packet from %u to %u\n", TOS_NODE_ID, destination);
+        // dbg(NEIGHBOR_CHANNEL, "Sent neighbor discovery packet from %u to %u\n", TOS_NODE_ID, destination);
 
         call NeighborTimer.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
     }
@@ -96,27 +96,26 @@ implementation{
             if(!isNeighbor(src) && *idx < 20){
                 neighborList[*idx] = src;
                 (*idx)++;
-                dbg(NEIGHBOR_CHANNEL, "Discovered new neighbor: %u\n", src);
+                // dbg(NEIGHBOR_CHANNEL, "Discovered new neighbor: %u\n", src);
             }
         }
         else if(protocol == PROTOCOL_NEIGHBORPING){ 
             if(!isNeighbor(src) && *idx < 20){
                 neighborList[*idx] = src;
                 (*idx)++;
-                dbg(NEIGHBOR_CHANNEL, "Discovered new neighbor: %u\n", src);
+                // dbg(NEIGHBOR_CHANNEL, "Discovered new neighbor: %u\n", src);
                 makePack(&returnPacket, TOS_NODE_ID, src, repTTL, PROTOCOL_NEIGHBORREPLY, repSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
                 call Sender.send(returnPacket, src);
-                dbg(NEIGHBOR_CHANNEL, "Replied to neighbor discovery from %u to %u\n", TOS_NODE_ID, src);
+                // dbg(NEIGHBOR_CHANNEL, "Replied to neighbor discovery from %u to %u\n", TOS_NODE_ID, src);
             }
         }
         else{
-            dbg(NEIGHBOR_CHANNEL, "Unknown protocol %u from %u\n", protocol, src);
+            // dbg(NEIGHBOR_CHANNEL, "Unknown protocol %u from %u\n", protocol, src);
             return;
         }
     }
 
     command uint8_t NeighborDiscovery.getCount(){
-        dbg(FLOODING_CHANNEL, "returning %u\n", neighborCount);
         return neighborCount;
     }
     command uint32_t NeighborDiscovery.getList(uint8_t count){
