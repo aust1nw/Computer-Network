@@ -64,7 +64,7 @@ implementation{
 
         statEntry = call NeighborTable.get(nodeID);
 
-        if(statEntry.numReceived > 5 && statEntry.average <= 50){
+        if(statEntry.numReceived > 5 && statEntry.average <= 70){
             return FALSE;
         }
         return TRUE;
@@ -102,10 +102,10 @@ implementation{
         if(editEntry.count < 10){
             editEntry.count++;
         }
-        if(protocol == 0){
+        if(protocol == PROTOCOL_PING){
             editEntry.numReceived++;
         }
-        else if(protocol == 1){
+        else if(protocol == PROTOCOL_PINGREPLY){
             editEntry.numReplied++;
         }
         else{
@@ -128,7 +128,6 @@ implementation{
     task void floodNeighbors(){
         pack sendPacket;
         uint8_t *payload = 0;
-        uint16_t SEND = 0;
         uint16_t source = TOS_NODE_ID;
         uint32_t *keys = call NeighborTable.getKeys();
         uint16_t count = call NeighborTable.size();
@@ -139,9 +138,9 @@ implementation{
         for(i = 0; i < count; i++){
             uint16_t destination = (uint16_t)keys[i];
             if(!hasCache(destination, seqNum)){
-                makePack(&sendPacket, source, destination, MAX_TTL, SEND, seqNum, payload, PACKET_MAX_PAYLOAD_SIZE);
+                makePack(&sendPacket, source, destination, MAX_TTL, PROTOCOL_PING, seqNum, payload, PACKET_MAX_PAYLOAD_SIZE);
                 call Send.send(sendPacket, destination);
-                call NeighborTable.insert(destination, updEntry(destination, seqNum, SEND));
+                call NeighborTable.insert(destination, updEntry(destination, seqNum, PROTOCOL_PING));
                 dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, destination, seqNum);
             }
             else{
@@ -199,7 +198,6 @@ implementation{
     command void Flooding.handleFlood(uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint8_t *msgContent){
         pack returnPacket;
         pack floodPack;
-        uint16_t RECEIVED = 1;
         uint8_t *payload = 0;
         uint32_t *keys = call NeighborTable.getKeys();
         uint16_t count = call NeighborTable.size();
@@ -207,15 +205,19 @@ implementation{
         uint16_t returnSeq = seq;
         uint8_t i;
         
-        if(protocol == 1){
+        if(protocol == PROTOCOL_PINGREPLY){
             call NeighborTable.insert(src, updEntry(src, seq, protocol));
             dbg(FLOODING_CHANNEL, "%u received a reply from %u\n", TOS_NODE_ID, src);
         }
-        else if(protocol == 0){
-            call NeighborTable.insert(src, updEntry(src, seq, RECEIVED));
-            makePack(&returnPacket, TOS_NODE_ID, src, returnTTL, RECEIVED, returnSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
+        else if(protocol == PROTOCOL_PING){
+            call NeighborTable.insert(src, updEntry(src, seq, PROTOCOL_PINGREPLY));
+            makePack(&returnPacket, TOS_NODE_ID, src, returnTTL, PROTOCOL_PINGREPLY, returnSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
             call Send.send(returnPacket, src);
             dbg(FLOODING_CHANNEL, "%u has replied to %u\n", TOS_NODE_ID, src);
+            if(seq >= seqNum){
+                updCount2(&seqNum, seq);
+                updSeq(&seqNum);
+            }
             for(i = 0; i < count; i++){
                 uint16_t destination = (uint16_t)keys[i];
                 
@@ -229,7 +231,7 @@ implementation{
                     dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, destination, seq);
                 }
                 else{
-                    dbg(FLOODING_CHANNEL, "Skipped flooding to %u; already has seq %u\n", destination, seq);
+                    dbg(FLOODING_CHANNEL, "Skipped flooding to %u; already has seq %u or is inactive.\n", destination, seq);
                     dbg(FLOODING_CHANNEL, "Destination %u active status: %s\n", destination, isActive(destination) ? "ACTIVE" : "INACTIVE");
                 }
             }

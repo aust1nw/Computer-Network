@@ -52,11 +52,10 @@ implementation{
         pack sendPacket;
         uint16_t destination = AM_BROADCAST_ADDR;
         uint8_t *payload = 0;
-        uint16_t HELLO = 100;
         uint16_t nTTL = 1;
         uint16_t nSeq = 0;
         
-        makePack(&sendPacket, TOS_NODE_ID, destination, nTTL, HELLO, nSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
+        makePack(&sendPacket, TOS_NODE_ID, destination, nTTL, PROTOCOL_NEIGHBORPING, nSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
         call Sender.send(sendPacket, destination);
         dbg(NEIGHBOR_CHANNEL, "Sent neighbor discovery packet from %u to %u\n", TOS_NODE_ID, destination);
 
@@ -85,7 +84,6 @@ implementation{
 
     command void NeighborDiscovery.receiveNeighbors(uint16_t protocol, uint16_t src, uint8_t* idx){
         pack returnPacket;
-        uint16_t REPLY = 101;
         uint8_t *payload = 0;
         uint16_t repTTL = 1;
         uint16_t repSeq = 0;
@@ -94,19 +92,19 @@ implementation{
             return;
         }
 
-        if(protocol == 101){  
+        if(protocol == PROTOCOL_NEIGHBORREPLY){  
             if(!isNeighbor(src) && *idx < 20){
                 neighborList[*idx] = src;
                 (*idx)++;
                 dbg(NEIGHBOR_CHANNEL, "Discovered new neighbor: %u\n", src);
             }
         }
-        else if(protocol == 100){ 
+        else if(protocol == PROTOCOL_NEIGHBORPING){ 
             if(!isNeighbor(src) && *idx < 20){
                 neighborList[*idx] = src;
                 (*idx)++;
                 dbg(NEIGHBOR_CHANNEL, "Discovered new neighbor: %u\n", src);
-                makePack(&returnPacket, TOS_NODE_ID, src, repTTL, REPLY, repSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
+                makePack(&returnPacket, TOS_NODE_ID, src, repTTL, PROTOCOL_NEIGHBORREPLY, repSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
                 call Sender.send(returnPacket, src);
                 dbg(NEIGHBOR_CHANNEL, "Replied to neighbor discovery from %u to %u\n", TOS_NODE_ID, src);
             }
