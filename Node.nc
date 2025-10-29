@@ -25,6 +25,9 @@ module Node{
    
    uses interface NeighborDiscovery;
    uses interface Flooding;
+
+   uses interface LSRouting;
+   uses interface IPForwarding;
 }
 
 implementation{
@@ -36,7 +39,8 @@ implementation{
    event void Boot.booted(){
       call AMControl.start();
       call NeighborDiscovery.start();
-      call Flooding.start();
+      call LSRouting.start();
+      call IPForwarding.start();
 
       dbg(GENERAL_CHANNEL, "Booted\n");
    }
@@ -56,7 +60,7 @@ implementation{
       dbg(GENERAL_CHANNEL, "Packet Received\n");
       if(len==sizeof(pack)){
          pack* myMsg=(pack*) payload;
-         call Flooding.handleFlood(myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, myMsg->dest, payload);
+         // call Flooding.handleFlood(myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, myMsg->dest, payload);
          dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
          return msg;
       }
@@ -68,16 +72,21 @@ implementation{
 
    event void CommandHandler.ping(uint16_t destination, uint8_t *payload){
       dbg(GENERAL_CHANNEL, "PING EVENT \n");
-      call Flooding.floodNeighbors(destination, payload);
+      // dbg(GENERAL_CHANNEL, "Node %u: CommandHandler.ping CALLED with dest=%u, payload='%s'\n", TOS_NODE_ID, destination, payload);
+      call IPForwarding.sendPing(destination, payload, strlen((char*)payload));
    }
 
    event void CommandHandler.printNeighbors(){
       call NeighborDiscovery.printNeighbors();
    }
 
-   event void CommandHandler.printRouteTable(){}
+   event void CommandHandler.printRouteTable(){
+      call LSRouting.printRouteTable();
+   }
 
-   event void CommandHandler.printLinkState(){}
+   event void CommandHandler.printLinkState(){
+      call LSRouting.printLinkState();
+   }
 
    event void CommandHandler.printDistanceVector(){}
 
@@ -96,5 +105,17 @@ implementation{
       Package->seq = seq;
       Package->protocol = protocol;
       memcpy(Package->payload, payload, length);
+   }
+
+   event void NeighborDiscovery.neighborsChanged(){
+      dbg(GENERAL_CHANNEL, "Node %u: Neighbor list changed\n", TOS_NODE_ID);
+   }
+
+   event void Flooding.receivedLSA(uint16_t src, uint8_t* lsaData){
+      dbg(GENERAL_CHANNEL, "Node %u: Received LSA from %u\n", TOS_NODE_ID, src);
+   }
+
+   event void IPForwarding.receivedPing(uint16_t src, uint8_t* data, uint8_t len){
+      dbg(GENERAL_CHANNEL, "Node %u: Received Data from %u: %s\n", TOS_NODE_ID, src, data);
    }
 }

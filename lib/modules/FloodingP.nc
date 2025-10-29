@@ -1,6 +1,8 @@
 #include <Timer.h>
 #include "../../includes/command.h"
 #include "../../includes/packet.h"
+#include "../../includes/flooding.h"
+#include "../../includes/LSA.h"
 #include "../../includes/CommandMsg.h"
 #include "../../includes/sendinfo.h"
 #include "../../includes/channels.h"
@@ -9,12 +11,11 @@
 generic module FloodingP(){
     provides interface Flooding;
     
-    uses interface Timer<TMilli> as FloodingTimer1;
-    // uses interface Timer<TMilli> as FloodingTimer2;
+    uses interface Timer<TMilli> as FloodingTimer;
     uses interface Random;
 
     uses interface Packet;
-    // uses interface Receive as FloodReceive;
+    uses interface Receive as FloodReceive;
     
     uses interface Hashmap<NeighborEntry> as NeighborTable;
 
@@ -23,7 +24,7 @@ generic module FloodingP(){
 }
 
 implementation{
-    uint16_t seqNum = 1;
+    uint16_t mySeqNum = 1;
     uint8_t lastCount = 0;
     uint8_t stableCount = 0;
     bool ready = FALSE;
@@ -38,6 +39,12 @@ implementation{
         if(payload != NULL && length > 0){
             memcpy(Package->payload, payload, length);
         }
+    }
+    
+    void makeFloodHeader(flood_header *header, uint16_t src, uint16_t seq, uint16_t TTL){
+        header->src = src;
+        header->seq = seq;
+        header->TTL = TTL;
     }
 
     bool hasCache(uint16_t nodeID, uint16_t seq){
@@ -63,12 +70,7 @@ implementation{
         }
 
         statEntry = call NeighborTable.get(nodeID);
-
-        if(statEntry.numReceived > 5 && statEntry.average <= 70){
-            return FALSE;
-        }
-
-        return TRUE;
+        return statEntry.active;
     }
     
     void updCount1(uint8_t* count){
@@ -81,9 +83,6 @@ implementation{
     
     void updSeq1(uint16_t* seq){
         (*seq)++;
-    }
-    void updSeq2(uint16_t* curSeq, uint16_t prevSeq){
-        *curSeq = prevSeq;
     }
 
     NeighborEntry updEntry(uint16_t entry, uint16_t seq, uint16_t protocol){
@@ -98,6 +97,7 @@ implementation{
             editEntry.numReceived = 0;
             editEntry.numReplied = 0;
             editEntry.average = 100;
+            editEntry.active = TRUE;
         }
         
         it = editEntry.count % 10;
@@ -106,15 +106,14 @@ implementation{
         if(editEntry.count < 10){
             editEntry.count++;
         }
-        if(protocol == PROTOCOL_PING){
+        
+        if(protocol == PROTOCOL_FLOODING){
             editEntry.numReceived++;
         }
-        else if(protocol == PROTOCOL_PINGREPLY){
+        else if(protocol == PROTOCOL_LSA_ACK){
             editEntry.numReplied++;
         }
-        else{
-            dbg(FLOODING_CHANNEL, "Invalid protocol\n");
-        }
+        
         if(editEntry.numReceived > 0){
             editEntry.average = (100*editEntry.numReplied)/editEntry.numReceived;
         } 
@@ -122,130 +121,205 @@ implementation{
             editEntry.average = 0;
         }
 
+        if(editEntry.numReceived > 5 && editEntry.average <= 70){
+            editEntry.active = FALSE;
+        } 
+        else {
+            editEntry.active = TRUE;
+        }
+
         return editEntry;
     }
 
     command void Flooding.start(){
-        call FloodingTimer1.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
+        call FloodingTimer.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
     }
 
-    command void Flooding.floodNeighbors(uint16_t destination, uint8_t *payload){
-        pack sendPacket;
-        uint16_t source = TOS_NODE_ID;
-        uint32_t *keys = call NeighborTable.getKeys();
-        uint16_t count = call NeighborTable.size();
+    command void Flooding.floodLSA(uint8_t* lsaPayload, uint8_t len){
+        pack linkPacket;
+        flood_header floodHdr;
+        uint8_t combinedPayload[PACKET_MAX_PAYLOAD_SIZE];
+        uint32_t *keys;
+        uint16_t count;
         uint8_t i;
+        count = call NeighborTable.size();
+        keys = call NeighborTable.getKeys();
 
-        // dbg(FLOODING_CHANNEL, "Node %u preparing to flood seq %u to %u neighbors\n", TOS_NODE_ID, seqNum, count);
+        if(count == 0){
+            dbg(FLOODING_CHANNEL, "Node %u: No neighbors to flood LSA\n", TOS_NODE_ID);
+            return;
+        }
+
+        makeFloodHeader(&floodHdr, TOS_NODE_ID, mySeqNum, MAX_TTL);
+        
+        // Payload: [flood_header][LSA data]
+        memcpy(combinedPayload, &floodHdr, FLOODING_HEADER_LENGTH);
+        memcpy(combinedPayload + FLOODING_HEADER_LENGTH, lsaPayload, len);
+
+        dbg(FLOODING_CHANNEL, "Node %u: Flooding LSA seq %u to %u neighbors\n", TOS_NODE_ID, mySeqNum, count);
 
         for(i = 0; i < count; i++){
-            uint16_t neighbor = (uint16_t)keys[i];
-            if(!hasCache(neighbor, seqNum) && isActive(neighbor)){
-                makePack(&sendPacket, source, destination, MAX_TTL, PROTOCOL_PING, seqNum, payload, PACKET_MAX_PAYLOAD_SIZE);
-                call Send.send(sendPacket, neighbor);
-                call NeighborTable.insert(neighbor, updEntry(neighbor, seqNum, PROTOCOL_PING));
-                dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, neighbor, seqNum);
-            }
-            else{
-                dbg(FLOODING_CHANNEL, "Skipped flooding for %u; already has seq %u\n", neighbor, seqNum);
+            uint8_t neighbor = (uint8_t)keys[i];
+            if(!hasCache(neighbor, mySeqNum) && isActive(neighbor)){
+                makePack(&linkPacket, TOS_NODE_ID, neighbor, MAX_TTL, PROTOCOL_FLOODING, 0, combinedPayload, PACKET_MAX_PAYLOAD_SIZE);
+                call Send.send(linkPacket, neighbor);
+                call NeighborTable.insert(neighbor, updEntry(neighbor, mySeqNum, PROTOCOL_FLOODING));
+                dbg(FLOODING_CHANNEL, "  -> Sent LSA to neighbor %u\n", neighbor);
             }
         }
 
-        updSeq1(&seqNum);
-
-        // call FloodingTimer2.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
+        updSeq1(&mySeqNum);
     }
 
-    event void FloodingTimer1.fired(){
+    event void FloodingTimer.fired(){
         uint8_t numNeighbors = call NeighborDiscovery.getCount();
         uint8_t i;
-        if(lastCount == numNeighbors){
-            updCount1(&stableCount);
-        }
-        if(stableCount >= 2){
-            for(i = 0; i < numNeighbors; i++){
-                uint32_t neighbor = call NeighborDiscovery.getList(i);
-                if(!call NeighborTable.contains(neighbor)){
-                    NeighborEntry newEntry;
-                    newEntry.count = 0;
-                    newEntry.numReceived = 0;
-                    newEntry.numReplied = 0;
-                    newEntry.average = 100;
-                    call NeighborTable.insert(neighbor, newEntry);
-                    // dbg(FLOODING_CHANNEL, "Inserted %u into the table\n", neighbor);
-                }
+
+        for(i = 0; i < numNeighbors; i++){
+            uint32_t neighbor = call NeighborDiscovery.getList(i);
+            if(!call NeighborTable.contains(neighbor)){
+                NeighborEntry newEntry;
+                newEntry.count = 0;
+                newEntry.numReceived = 0;
+                newEntry.numReplied = 0;
+                newEntry.average = 100;
+                newEntry.active = TRUE;
+                call NeighborTable.insert(neighbor, newEntry);
+                dbg(FLOODING_CHANNEL, "Node %u: Added neighbor %u to table\n", TOS_NODE_ID, neighbor);
             }
+        }
+
+        if(numNeighbors > 0 && !ready){
             ready = TRUE;
-            // dbg(FLOODING_CHANNEL, "Ready to Flood\n");
-            // post floodNeighbors();
-            return;
+            dbg(FLOODING_CHANNEL, "Node %u: Flooding module is ready\n", TOS_NODE_ID);
         }
-        else{
-            updCount2(&lastCount, numNeighbors);
-        }
+
+        updCount2(&lastCount, numNeighbors);
+        
     }
 
-    // event void FloodingTimer2.fired(){
-    //     post floodNeighbors();
-    // }
+    command bool Flooding.isReady(){
+        return ready;
+    }
 
-    // event message_t* FloodReceive.receive(message_t* msg, void* payload, uint8_t len){
-    //     if(len==sizeof(pack)){
-    //         pack* myMsg=(pack*) payload;
-    //         call Flooding.handleFlood(myMsg->protocol, myMsg->src, myMsg->seq, myMsg->TTL, payload);
-    //         return msg;
-    //     }
-    //     return msg;
-    // }
+    event message_t* FloodReceive.receive(message_t* msg, void* payload, uint8_t len){
+        if(len==sizeof(pack)){
+            pack* linkPkt=(pack*) payload;
+            
+            // Handle LSA flooding packets
+            if(linkPkt->protocol == PROTOCOL_FLOODING){
+                flood_header* floodHdr = (flood_header*)linkPkt->payload;
+                uint8_t* lsaPayload = (uint8_t*)(linkPkt->payload + FLOODING_HEADER_LENGTH);
+                
+                dbg(FLOODING_CHANNEL, "Node %u: Received LSA from %u (seq %u)\n",
+                    TOS_NODE_ID, floodHdr->src, floodHdr->seq);
+                
+                // Send ACK to the neighbor who sent it
+                call Flooding.sendLSAACK(linkPkt->src, floodHdr->seq);
+                
+                // Forward the LSA to other neighbors
+                call Flooding.forwardLSA(floodHdr, linkPkt->src, lsaPayload);
+                
+                // Notify LSRouting to process this LSA
+                signal Flooding.receivedLSA(floodHdr->src, lsaPayload);
+                dbg(ROUTING_CHANNEL, "Node %u: Signaled received LSA from %u to LSRouting\n", TOS_NODE_ID, floodHdr->src);
+            }
+            else if(linkPkt->protocol == PROTOCOL_LSA_ACK){
+                call NeighborTable.insert(linkPkt->src, updEntry(linkPkt->src, linkPkt->seq, PROTOCOL_LSA_ACK));
+                dbg(FLOODING_CHANNEL, "Node %u: Received LSA ACK from %u\n", TOS_NODE_ID, linkPkt->src);
+            }
+            return msg;
+        }
+        return msg;
+    }
 
-    command void Flooding.handleFlood(uint16_t protocol, uint16_t src, uint16_t seq, uint16_t TTL, uint16_t destination, uint8_t *msgContent){
-        pack returnPacket;
-        pack floodPack;
+    command void Flooding.sendLSAACK(uint16_t neighbor, uint16_t seq){
+        pack ackPacket;
         uint8_t *payload = 0;
-        uint32_t *keys = call NeighborTable.getKeys();
-        uint16_t count = call NeighborTable.size();
-        uint16_t returnTTL = 1;
-        uint16_t returnSeq = seq;
+        
+        dbg(FLOODING_CHANNEL, "Node %u: Sending LSA ACK to %u for seq %u\n", TOS_NODE_ID, neighbor, seq);
+            
+        makePack(&ackPacket, TOS_NODE_ID, neighbor, 1, PROTOCOL_LSA_ACK, seq, payload, 0);
+        call Send.send(ackPacket, neighbor);
+        call NeighborTable.insert(neighbor, updEntry(neighbor, seq, PROTOCOL_LSA_ACK));
+    }
+
+    command void Flooding.forwardLSA(flood_header* floodHdr, uint16_t receivedFrom, uint8_t* lsaPayload){
+        pack floodPack;
+        flood_header newFloodHdr;
+        uint8_t combinedPayload[PACKET_MAX_PAYLOAD_SIZE];
+        uint32_t *keys;
+        uint16_t count;
         uint8_t i;
         
-        if(protocol == PROTOCOL_PINGREPLY){
-            call NeighborTable.insert(src, updEntry(src, seq, protocol));
-            dbg(FLOODING_CHANNEL, "%u received a reply from %u\n", TOS_NODE_ID, src);
-        }
-        else if(protocol == PROTOCOL_PING){
-            call NeighborTable.insert(src, updEntry(src, seq, PROTOCOL_PINGREPLY));
-            makePack(&returnPacket, TOS_NODE_ID, src, returnTTL, PROTOCOL_PINGREPLY, returnSeq, payload, PACKET_MAX_PAYLOAD_SIZE);
-            call Send.send(returnPacket, src);
-            dbg(FLOODING_CHANNEL, "%u has replied to %u\n", TOS_NODE_ID, src);
-            if(seq >= seqNum){
-                updSeq2(&seqNum, seq);
-                updSeq1(&seqNum);
-            }
-            if(TOS_NODE_ID == destination){
-                dbg(FLOODING_CHANNEL, "Success\n");
-                return;
-            }
-            for(i = 0; i < count; i++){
-                uint16_t neighbor = (uint16_t)keys[i];
-                
-                if (neighbor == src) continue;
-
-                if(!hasCache(neighbor, seq) && TTL > 0 && isActive(neighbor)){
-                    uint16_t newTTL = TTL - 1;
-                    call NeighborTable.insert(neighbor, updEntry(neighbor, seq, protocol));
-                    makePack(&floodPack, TOS_NODE_ID, destination, newTTL, protocol, seq, msgContent, PACKET_MAX_PAYLOAD_SIZE);
-                    call Send.send(floodPack, neighbor);
-                    dbg(FLOODING_CHANNEL, "%u has flooded to %u with seq %u\n", TOS_NODE_ID, neighbor, seq);
-                }
-                else{
-                    dbg(FLOODING_CHANNEL, "Skipped flooding to %u; already has seq %u or is inactive.\n", neighbor, seq);
-                    dbg(FLOODING_CHANNEL, "Destination %u active status: %s\n", neighbor, isActive(neighbor) ? "ACTIVE" : "INACTIVE");
-                }
-            }
-        }
-        else{
-            // dbg(FLOODING_CHANNEL, "Unknown protocol\n");
+        // Check TTL
+        if(floodHdr->TTL == 0){
+            dbg(FLOODING_CHANNEL, "LSA TTL expired, not forwarding\n");
             return;
+        }
+        
+        // Decrement TTL
+        makeFloodHeader(&newFloodHdr, floodHdr->src, floodHdr->seq, floodHdr->TTL - 1);
+        
+        // Rebuild payload
+        memcpy(combinedPayload, &newFloodHdr, FLOODING_HEADER_LENGTH);
+        memcpy(combinedPayload + FLOODING_HEADER_LENGTH, lsaPayload, sizeof(LSA));
+        
+        keys = call NeighborTable.getKeys();
+        count = call NeighborTable.size();
+        
+        dbg(FLOODING_CHANNEL, "Forwarding LSA to other neighbors\n");
+        
+        // Forward to all neighbors except sender
+        for(i = 0; i < count; i++){
+            uint8_t neighbor = (uint8_t)keys[i];
+            
+            if(neighbor == receivedFrom) continue;
+            
+            if(!hasCache(neighbor, floodHdr->seq) && isActive(neighbor)){
+                makePack(&floodPack, TOS_NODE_ID, neighbor, MAX_TTL, PROTOCOL_FLOODING, 0, combinedPayload, PACKET_MAX_PAYLOAD_SIZE);
+                call Send.send(floodPack, neighbor);
+                call NeighborTable.insert(neighbor, updEntry(neighbor, floodHdr->seq, PROTOCOL_FLOODING));
+                dbg(FLOODING_CHANNEL, "Forwarded LSA to neighbor %u\n", neighbor);
+            }
+        }
+    }
+    
+    event void NeighborDiscovery.neighborsChanged(){
+        uint8_t numNeighbors = call NeighborDiscovery.getCount();
+        uint32_t *keys = call NeighborTable.getKeys();
+        uint16_t tableSize = call NeighborTable.size();
+        uint8_t i;
+
+        dbg(FLOODING_CHANNEL, "Node %u: Neighbor list changed\n", TOS_NODE_ID);
+        
+        for(i = 0; i < numNeighbors; i++){
+            uint32_t neighbor = call NeighborDiscovery.getList(i);
+            if(!call NeighborTable.contains(neighbor)){
+                NeighborEntry newEntry;
+                newEntry.count = 0;
+                newEntry.numReceived = 0;
+                newEntry.numReplied = 0;
+                newEntry.average = 100;
+                newEntry.active = TRUE;
+                call NeighborTable.insert(neighbor, newEntry);
+            }
+        }
+        
+        for(i = 0; i < tableSize; i++){
+            uint16_t tableNeighbor = (uint16_t)keys[i];
+            bool stillNeighbor = FALSE;
+            uint8_t j;
+            for(j = 0; j < numNeighbors; j++){
+                if(call NeighborDiscovery.getList(j) == tableNeighbor){
+                    stillNeighbor = TRUE;
+                    break;
+                }
+            }
+            if(!stillNeighbor){
+                call NeighborTable.remove(tableNeighbor);
+                dbg(FLOODING_CHANNEL, "Removed old neighbor %u from table\n", tableNeighbor);
+            }
         }
     }
 }

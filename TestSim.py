@@ -135,22 +135,40 @@ def main():
     s.loadTopo("long_line.topo");
     s.loadNoise("no_noise.txt");
     s.bootAll();
-    #s.addChannel(s.COMMAND_CHANNEL);
-    #s.addChannel(s.GENERAL_CHANNEL);
-    s.addChannel(s.NEIGHBOR_CHANNEL);
-    s.addChannel(s.FLOODING_CHANNEL);
+    # s.addChannel(s.COMMAND_CHANNEL);
+    s.addChannel(s.GENERAL_CHANNEL);
+    # s.addChannel(s.NEIGHBOR_CHANNEL);
+    # s.addChannel(s.FLOODING_CHANNEL);
+    # s.addChannel(s.ROUTING_CHANNEL);
 
+    print "=== Waiting for routing to converge ==="
+    s.runTime(3000);
+    
+    # Print routing tables to verify routes exist
+    print "=== Checking routing tables ==="
+    s.routeDMP(1);
+    s.runTime(5);
+    s.routeDMP(2);
+    s.runTime(5); 
+    s.routeDMP(3);
+    s.runTime(5);
+    
+    # Test 1: Direct neighbor ping (if topology allows)
+    print "=== Test 1: Ping direct neighbor ==="
+    s.ping(1, 2, "Hello neighbor!");
     s.runTime(10);
-    s.neighborDMP(5);
+    
+    # Test 2: Multi-hop ping  
+    print "=== Test 2: Ping multi-hop ==="
+    s.ping(1, 3, "Hello multi-hop!");
     s.runTime(10);
-    s.ping(3, 18, "Test 1");
-    s.runTime(30);
-    s.moteOff(5);
+    
+    # Test 3: Ping from different node
+    print "=== Test 3: Ping from node 2 ==="
+    s.ping(2, 3, "Hello from node 2!");
     s.runTime(10);
-    s.ping(4, 7, "Test 2");
-    s.runTime(30);
-    s.neighborDMP(6);
-    s.runTime(30);
+
+    
 
 if __name__ == '__main__':
     main()

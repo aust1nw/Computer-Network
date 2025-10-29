@@ -11,4 +11,11 @@ interface NeighborDiscovery{
     command void receiveNeighbors(uint16_t protocol, uint16_t src, uint8_t* idx);
     command uint8_t getCount();
     command uint32_t getList(uint8_t count);
+
+    command uint16_t getLinkCost(uint16_t neighborId);
+    
+    command uint16_t* getNeighborList();
+    command uint16_t* getCostList();
+    
+    event void neighborsChanged();
 }

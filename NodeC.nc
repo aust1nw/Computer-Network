@@ -31,9 +31,13 @@ implementation {
     components CommandHandlerC;
     Node.CommandHandler -> CommandHandlerC;
 
-    components new NeighborDiscoveryC();
-    Node.NeighborDiscovery -> NeighborDiscoveryC;
-
-    components new FloodingC();
-    Node.Flooding -> FloodingC;
+    components new NeighborDiscoveryC() as NeighborDiscovery;
+    components new FloodingC() as Flooding;
+    components new LSRoutingC() as LSRouting;
+    components new IPForwardingC() as IPForwarding;
+    
+    Node.NeighborDiscovery -> NeighborDiscovery;
+    Node.Flooding -> Flooding;
+    Node.LSRouting -> LSRouting;
+    Node.IPForwarding -> IPForwarding;  
 }
