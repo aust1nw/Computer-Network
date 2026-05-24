@@ -8,5 +8,5 @@ interface CommandHandler{
    event void setTestServer();
    event void setTestClient();
    event void setAppServer();
-   event void setAppClient();
+   event void setAppClient(uint16_t port);
 }

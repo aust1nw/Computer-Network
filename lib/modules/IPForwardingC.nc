@@ -19,9 +19,15 @@ implementation{
     components ActiveMessageC;
     IPFwd.Packet -> ActiveMessageC;
 
-    components new AMReceiverC(AM_PACK) as IPReceive;
-    IPFwd.IPReceive -> IPReceive;
+    components new AMReceiverC(AM_PACK) as AMRecv;
+    IPFwd.IPReceive -> AMRecv;
 
     components new SimpleSendC(AM_PACK) as Send;
     IPFwd.Send -> Send;
+
+    components new PoolC(pack, 10);
+    components new QueueC(pack*, 10);
+
+    IPFwd.Pool -> PoolC;
+    IPFwd.Queue -> QueueC;
 }

@@ -149,6 +149,47 @@ implementation{
             }
         }
     }
+
+    command void Graph.clearNodeEdges(uint16_t node) {
+        uint8_t i, j;
+        
+        // Check if node has any neighbors
+        if (graph.neighborCount[node] == 0) {
+            return;
+        }
+        
+        // Remove all edges FROM this node to its neighbors
+        for (i = 0; i < graph.neighborCount[node]; i++) {
+            uint16_t neighbor = graph.edges[node][i];
+            
+            if (neighbor == 0xFFFF) continue;  // Skip invalid entries
+            
+            // Remove the reverse edge (neighbor -> node)
+            for (j = 0; j < graph.neighborCount[neighbor]; j++) {
+                if (graph.edges[neighbor][j] == node) {
+                    // Shift remaining elements to remove this edge
+                    uint8_t k;
+                    for (k = j; k < graph.neighborCount[neighbor] - 1; k++) {
+                        graph.edges[neighbor][k] = graph.edges[neighbor][k + 1];
+                        graph.costs[neighbor][k] = graph.costs[neighbor][k + 1];
+                    }
+                    // Clear the last element
+                    graph.edges[neighbor][graph.neighborCount[neighbor] - 1] = 0xFFFF;
+                    graph.costs[neighbor][graph.neighborCount[neighbor] - 1] = 0xFFFF;
+                    graph.neighborCount[neighbor]--;
+                    graph.edgeCount--;
+                    break;
+                }
+            }
+        }
+        
+        // Reset this node's edges
+        graph.neighborCount[node] = 0;
+        for (i = 0; i < MAX_NEIGHBORS_PER_NODE; i++) {
+            graph.edges[node][i] = 0xFFFF;
+            graph.costs[node][i] = 0xFFFF;
+        }
+    }
     
     command bool Graph.hasEdge(uint16_t u, uint16_t v) {
         return hasEdgeHelper(u, v);

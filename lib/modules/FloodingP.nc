@@ -61,17 +61,6 @@ implementation{
         }
         return FALSE;
     }
-
-    bool isActive(uint16_t nodeID){
-        NeighborEntry statEntry;
-
-        if(!call NeighborTable.contains(nodeID)){
-            return FALSE;
-        }
-
-        statEntry = call NeighborTable.get(nodeID);
-        return statEntry.active;
-    }
     
     void updCount1(uint8_t* count){
         (*count)++;
@@ -94,10 +83,6 @@ implementation{
         }
         else{
             editEntry.count = 0;
-            editEntry.numReceived = 0;
-            editEntry.numReplied = 0;
-            editEntry.average = 100;
-            editEntry.active = TRUE;
         }
         
         it = editEntry.count % 10;
@@ -107,45 +92,26 @@ implementation{
             editEntry.count++;
         }
         
-        if(protocol == PROTOCOL_FLOODING){
-            editEntry.numReceived++;
-        }
-        else if(protocol == PROTOCOL_LSA_ACK){
-            editEntry.numReplied++;
-        }
-        
-        if(editEntry.numReceived > 0){
-            editEntry.average = (100*editEntry.numReplied)/editEntry.numReceived;
-        } 
-        else{
-            editEntry.average = 0;
-        }
-
-        if(editEntry.numReceived > 5 && editEntry.average <= 70){
-            editEntry.active = FALSE;
-        } 
-        else {
-            editEntry.active = TRUE;
-        }
 
         return editEntry;
     }
 
     command void Flooding.start(){
-        call FloodingTimer.startPeriodic(1000 + (uint16_t)(call Random.rand16()%1000));
+        call FloodingTimer.startPeriodic(2000 + (uint16_t)(call Random.rand16()%1000));
     }
 
     command void Flooding.floodLSA(uint8_t* lsaPayload, uint8_t len){
         pack linkPacket;
         flood_header floodHdr;
         uint8_t combinedPayload[PACKET_MAX_PAYLOAD_SIZE];
-        uint32_t *keys;
-        uint16_t count;
+        uint16_t* neighbors;
+        uint8_t numNeighbors;
         uint8_t i;
-        count = call NeighborTable.size();
-        keys = call NeighborTable.getKeys();
+        
+        numNeighbors = call NeighborDiscovery.getCount();
+        neighbors = call NeighborDiscovery.getNeighborList();
 
-        if(count == 0){
+        if(numNeighbors == 0){
             dbg(FLOODING_CHANNEL, "Node %u: No neighbors to flood LSA\n", TOS_NODE_ID);
             return;
         }
@@ -156,16 +122,13 @@ implementation{
         memcpy(combinedPayload, &floodHdr, FLOODING_HEADER_LENGTH);
         memcpy(combinedPayload + FLOODING_HEADER_LENGTH, lsaPayload, len);
 
-        dbg(FLOODING_CHANNEL, "Node %u: Flooding LSA seq %u to %u neighbors\n", TOS_NODE_ID, mySeqNum, count);
+        dbg(FLOODING_CHANNEL, "Node %u: Flooding LSA seq %u to %u neighbors\n", TOS_NODE_ID, mySeqNum, numNeighbors);
 
-        for(i = 0; i < count; i++){
-            uint8_t neighbor = (uint8_t)keys[i];
-            if(!hasCache(neighbor, mySeqNum) && isActive(neighbor)){
-                makePack(&linkPacket, TOS_NODE_ID, neighbor, MAX_TTL, PROTOCOL_FLOODING, 0, combinedPayload, PACKET_MAX_PAYLOAD_SIZE);
-                call Send.send(linkPacket, neighbor);
-                call NeighborTable.insert(neighbor, updEntry(neighbor, mySeqNum, PROTOCOL_FLOODING));
-                dbg(FLOODING_CHANNEL, "  -> Sent LSA to neighbor %u\n", neighbor);
-            }
+        for(i = 0; i < numNeighbors; i++){
+            makePack(&linkPacket, TOS_NODE_ID, neighbors[i], MAX_TTL, PROTOCOL_FLOODING, 0, combinedPayload, PACKET_MAX_PAYLOAD_SIZE);
+            call Send.send(linkPacket, neighbors[i]);
+            call NeighborTable.insert(neighbors[i], updEntry(neighbors[i], mySeqNum, PROTOCOL_FLOODING));
+            dbg(FLOODING_CHANNEL, "  -> Sent LSA to neighbor %u\n", neighbors[i]);
         }
 
         updSeq1(&mySeqNum);
@@ -180,10 +143,6 @@ implementation{
             if(!call NeighborTable.contains(neighbor)){
                 NeighborEntry newEntry;
                 newEntry.count = 0;
-                newEntry.numReceived = 0;
-                newEntry.numReplied = 0;
-                newEntry.average = 100;
-                newEntry.active = TRUE;
                 call NeighborTable.insert(neighbor, newEntry);
                 dbg(FLOODING_CHANNEL, "Node %u: Added neighbor %u to table\n", TOS_NODE_ID, neighbor);
             }
@@ -211,18 +170,23 @@ implementation{
                 flood_header* floodHdr = (flood_header*)linkPkt->payload;
                 uint8_t* lsaPayload = (uint8_t*)(linkPkt->payload + FLOODING_HEADER_LENGTH);
                 
-                dbg(FLOODING_CHANNEL, "Node %u: Received LSA from %u (seq %u)\n",
-                    TOS_NODE_ID, floodHdr->src, floodHdr->seq);
+                // dbg(FLOODING_CHANNEL, "Node %u: Received LSA from %u (seq %u)\n", TOS_NODE_ID, floodHdr->src, floodHdr->seq);
                 
-                // Send ACK to the neighbor who sent it
+                if (hasCache(floodHdr->src, floodHdr->seq)) {
+                    call Flooding.sendLSAACK(linkPkt->src, floodHdr->seq);
+                }
+
+                call NeighborTable.insert(floodHdr->src, updEntry(floodHdr->src, floodHdr->seq, PROTOCOL_FLOODING));
+
                 call Flooding.sendLSAACK(linkPkt->src, floodHdr->seq);
                 
                 // Forward the LSA to other neighbors
                 call Flooding.forwardLSA(floodHdr, linkPkt->src, lsaPayload);
+                // dbg(GENERAL_CHANNEL, "Forwarding LSA\n");
                 
                 // Notify LSRouting to process this LSA
                 signal Flooding.receivedLSA(floodHdr->src, lsaPayload);
-                dbg(ROUTING_CHANNEL, "Node %u: Signaled received LSA from %u to LSRouting\n", TOS_NODE_ID, floodHdr->src);
+                // dbg(ROUTING_CHANNEL, "Node %u: Signaled received LSA from %u to LSRouting\n", TOS_NODE_ID, floodHdr->src);
             }
             else if(linkPkt->protocol == PROTOCOL_LSA_ACK){
                 call NeighborTable.insert(linkPkt->src, updEntry(linkPkt->src, linkPkt->seq, PROTOCOL_LSA_ACK));
@@ -248,8 +212,8 @@ implementation{
         pack floodPack;
         flood_header newFloodHdr;
         uint8_t combinedPayload[PACKET_MAX_PAYLOAD_SIZE];
-        uint32_t *keys;
-        uint16_t count;
+        uint16_t* neighbors;
+        uint8_t numNeighbors;
         uint8_t i;
         
         // Check TTL
@@ -265,23 +229,19 @@ implementation{
         memcpy(combinedPayload, &newFloodHdr, FLOODING_HEADER_LENGTH);
         memcpy(combinedPayload + FLOODING_HEADER_LENGTH, lsaPayload, sizeof(LSA));
         
-        keys = call NeighborTable.getKeys();
-        count = call NeighborTable.size();
+        numNeighbors = call NeighborDiscovery.getCount();
+        neighbors = call NeighborDiscovery.getNeighborList();
         
         dbg(FLOODING_CHANNEL, "Forwarding LSA to other neighbors\n");
         
         // Forward to all neighbors except sender
-        for(i = 0; i < count; i++){
-            uint8_t neighbor = (uint8_t)keys[i];
-            
-            if(neighbor == receivedFrom) continue;
-            
-            if(!hasCache(neighbor, floodHdr->seq) && isActive(neighbor)){
-                makePack(&floodPack, TOS_NODE_ID, neighbor, MAX_TTL, PROTOCOL_FLOODING, 0, combinedPayload, PACKET_MAX_PAYLOAD_SIZE);
-                call Send.send(floodPack, neighbor);
-                call NeighborTable.insert(neighbor, updEntry(neighbor, floodHdr->seq, PROTOCOL_FLOODING));
-                dbg(FLOODING_CHANNEL, "Forwarded LSA to neighbor %u\n", neighbor);
-            }
+        for(i = 0; i < numNeighbors; i++){
+            if(neighbors[i] == receivedFrom) continue;
+                
+            makePack(&floodPack, TOS_NODE_ID, neighbors[i], MAX_TTL, PROTOCOL_FLOODING, 0, combinedPayload, PACKET_MAX_PAYLOAD_SIZE);
+            call Send.send(floodPack, neighbors[i]);
+            call NeighborTable.insert(neighbors[i], updEntry(neighbors[i], floodHdr->seq, PROTOCOL_FLOODING));
+            dbg(FLOODING_CHANNEL, "Forwarded LSA to neighbor %u\n", neighbors[i]);
         }
     }
     
@@ -298,10 +258,6 @@ implementation{
             if(!call NeighborTable.contains(neighbor)){
                 NeighborEntry newEntry;
                 newEntry.count = 0;
-                newEntry.numReceived = 0;
-                newEntry.numReplied = 0;
-                newEntry.average = 100;
-                newEntry.active = TRUE;
                 call NeighborTable.insert(neighbor, newEntry);
             }
         }

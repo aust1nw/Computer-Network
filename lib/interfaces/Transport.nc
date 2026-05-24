@@ -1,5 +1,6 @@
-#include "../../packet.h"
+#include "../../includes/packet.h"
 #include "../../includes/socket.h"
+#include "../../includes/transport_header.h"
 
 /**
  * The Transport interface handles sockets and is a layer of abstraction
@@ -144,4 +145,8 @@ interface Transport{
     *   to listen else FAIL.
     */
    command error_t listen(socket_t fd);
+
+   command uint8_t getState(socket_t fd);
+
+   // event void connected(socket_t fd);
 }

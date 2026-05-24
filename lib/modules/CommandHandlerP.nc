@@ -27,6 +27,11 @@ implementation{
             message_t *raw_msg;
             void *payload;
 
+            // uint16_t client_address;
+            // uint16_t srcPort;
+            // uint16_t dest;
+            // uint16_t destPort;
+            
             // Pop message out of queue.
             raw_msg = call Queue.dequeue();
             payload = call Packet.getPayload(raw_msg, sizeof(CommandMsg));
@@ -76,6 +81,30 @@ implementation{
             case CMD_TEST_SERVER:
                 dbg(COMMAND_CHANNEL, "Command Type: Client\n");
                 signal CommandHandler.setTestServer();
+                break;
+
+            case CMD_APP_CLIENT:
+                dbg(COMMAND_CHANNEL, "Command Type: App Client\n");
+                {
+                    // Parse the string payload into a uint16_t
+                    uint16_t port = 0;
+                    uint8_t i = 0;
+                    // buff contains the payload string
+                    while(buff[i] >= '0' && buff[i] <= '9'){
+                        port = port * 10 + (buff[i] - '0');
+                        i++;
+                    }
+                    
+                    // Safety check if parsing failed
+                    if(port == 0) port = 200; 
+
+                    signal CommandHandler.setAppClient(port);
+                }
+                break;
+
+            case CMD_APP_SERVER:
+                dbg(COMMAND_CHANNEL, "Command Type: App Server\n");
+                signal CommandHandler.setAppServer();
                 break;
 
             default:

@@ -28,18 +28,20 @@ module Node{
 
    uses interface LSRouting;
    uses interface IPForwarding;
+
+   uses interface Transport;
+   uses interface Application;
 }
 
 implementation{
    pack sendPackage;
+   uint8_t initCount = 0;
 
    // Prototypes
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t Protocol, uint16_t seq, uint8_t *payload, uint8_t length);
 
    event void Boot.booted(){
       call AMControl.start();
-      call NeighborDiscovery.start();
-      call LSRouting.start();
       call IPForwarding.start();
 
       dbg(GENERAL_CHANNEL, "Booted\n");
@@ -48,6 +50,7 @@ implementation{
    event void AMControl.startDone(error_t err){
       if(err == SUCCESS){
          dbg(GENERAL_CHANNEL, "Radio On\n");
+         
       }else{
          //Retry until successful
          call AMControl.start();
@@ -71,9 +74,8 @@ implementation{
 
 
    event void CommandHandler.ping(uint16_t destination, uint8_t *payload){
-      dbg(GENERAL_CHANNEL, "PING EVENT \n");
-      // dbg(GENERAL_CHANNEL, "Node %u: CommandHandler.ping CALLED with dest=%u, payload='%s'\n", TOS_NODE_ID, destination, payload);
-      call IPForwarding.sendPing(destination, payload, strlen((char*)payload));
+      // dbg(GENERAL_CHANNEL, "PING EVENT \n");
+      call Application.appInject(payload);
    }
 
    event void CommandHandler.printNeighbors(){
@@ -85,18 +87,26 @@ implementation{
    }
 
    event void CommandHandler.printLinkState(){
-      call LSRouting.printLinkState();
+      // call LSRouting.printLinkState();
    }
 
    event void CommandHandler.printDistanceVector(){}
 
-   event void CommandHandler.setTestServer(){}
+   event void CommandHandler.setTestServer(){
+      call Application.setTestServer();
+   }
 
-   event void CommandHandler.setTestClient(){}
+   event void CommandHandler.setTestClient(){
+      call Application.setTestClient();
+   }
 
-   event void CommandHandler.setAppServer(){}
+   event void CommandHandler.setAppServer(){
+      call Application.setAppServer();
+   }
 
-   event void CommandHandler.setAppClient(){}
+   event void CommandHandler.setAppClient(uint16_t port){
+      call Application.setAppClient(port);
+   }
 
    void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t* payload, uint8_t length){
       Package->src = src;
@@ -108,14 +118,14 @@ implementation{
    }
 
    event void NeighborDiscovery.neighborsChanged(){
-      dbg(GENERAL_CHANNEL, "Node %u: Neighbor list changed\n", TOS_NODE_ID);
+      // dbg(GENERAL_CHANNEL, "Node %u: Neighbor list changed\n", TOS_NODE_ID);
    }
 
    event void Flooding.receivedLSA(uint16_t src, uint8_t* lsaData){
-      dbg(GENERAL_CHANNEL, "Node %u: Received LSA from %u\n", TOS_NODE_ID, src);
+      // dbg(GENERAL_CHANNEL, "Node %u: Received LSA from %u\n", TOS_NODE_ID, src);
    }
 
-   event void IPForwarding.receivedPing(uint16_t src, uint8_t* data, uint8_t len){
-      dbg(GENERAL_CHANNEL, "Node %u: Received Data from %u: %s\n", TOS_NODE_ID, src, data);
-   }
+   event void IPForwarding.packReachedDest(pack* linkPkt, uint8_t len){}
+
+   // event void Transport.connected(socket_t fd){}
 }

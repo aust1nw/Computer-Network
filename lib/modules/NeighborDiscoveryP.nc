@@ -5,7 +5,11 @@
 #include "../../includes/sendinfo.h"
 #include "../../includes/channels.h"
 
-#define INF 9999
+#define INF 0xFFFF
+#define MAX_NEIGHBORS 20
+#define NEIGHBOR_TIMEOUT 60000
+#define ALPHA_NUM 4
+#define ALPHA_DEN 10 
 
 generic module NeighborDiscoveryP() {
     provides interface NeighborDiscovery;
@@ -21,16 +25,17 @@ generic module NeighborDiscoveryP() {
 }
 
 implementation {
-    uint16_t neighborList[20];
-    uint16_t previousNeighborList[20];
-    uint16_t linkCosts[20] = {0}; 
+    uint16_t neighborList[MAX_NEIGHBORS];
+    uint32_t linkCosts[MAX_NEIGHBORS];
+    uint32_t lastSeen[MAX_NEIGHBORS];
+    bool neighborActive[MAX_NEIGHBORS];
     uint8_t neighborCount = 0;
-    uint8_t previousNeighborCount = 0;
-    
-    // RTT measurement variables
-    uint32_t pingStartTime = 0;
+
+    // RTT tracking
+    uint32_t rttStartTime[MAX_NEIGHBORS];
+    uint32_t rttEWMA[MAX_NEIGHBORS];
+    bool waitingForRTT[MAX_NEIGHBORS];
     uint16_t currentSeq = 0;
-    bool discoveryInProgress = FALSE;
 
     void makePack(pack *Package, uint16_t src, uint16_t dest, uint16_t TTL, uint16_t protocol, uint16_t seq, uint8_t *payload, uint8_t length){
         Package->src = src;
@@ -64,156 +69,194 @@ implementation {
         return 0xFF;
     }
     
-    uint8_t addNeighbor(uint16_t nodeID, uint16_t cost){
-        if(!isNeighbor(nodeID) && neighborCount < 20){
-            neighborList[neighborCount] = nodeID;
-            linkCosts[neighborCount] = cost;
-            neighborCount++;
-            return neighborCount - 1;
+    uint8_t addOrUpdateNeighbor(uint16_t id) {
+        uint8_t idx = getNeighborIndex(id);
+
+        if(idx != 0xFF) {
+            // existing neighbor
+            lastSeen[idx] = call NeighborTimer.getNow();
+            neighborActive[idx] = TRUE;
+            return idx;
         }
-        return getNeighborIndex(nodeID);
+
+        if(neighborCount >= MAX_NEIGHBORS)
+            return 0xFF;
+
+        // Add new neighbor
+        idx = neighborCount++;
+        neighborList[idx] = id;
+        neighborActive[idx] = TRUE;
+        lastSeen[idx] = call NeighborTimer.getNow();
+
+        // Initialize RTT estimates
+        rttEWMA[idx] = 150;  // default
+        waitingForRTT[idx] = FALSE;
+        linkCosts[idx] = rttEWMA[idx];
+
+        return idx;
     }
-    
-    bool neighborsHaveChanged(){
-        uint8_t i, j;
-        
-        if(neighborCount != previousNeighborCount){
-            return TRUE;
-        }
-        
-        for(i = 0; i < neighborCount; i++){
-            bool found = FALSE;
-            for(j = 0; j < previousNeighborCount; j++){
-                if(neighborList[i] == previousNeighborList[j]){
-                    found = TRUE;
-                    break;
-                }
+
+    void checkNeighborTimeouts() {
+        uint32_t now = call NeighborTimer.getNow();
+        bool changed = FALSE;
+        uint16_t newList[MAX_NEIGHBORS];
+        uint32_t newCosts[MAX_NEIGHBORS];
+        uint32_t newSeen[MAX_NEIGHBORS];
+        bool newActive[MAX_NEIGHBORS];
+        uint8_t newCount = 0;
+        uint8_t i;
+
+        for(i = 0; i < neighborCount; i++) {
+            if(neighborActive[i] &&
+               (now - lastSeen[i]) <= NEIGHBOR_TIMEOUT)
+            {
+                newList[newCount]  = neighborList[i];
+                newCosts[newCount] = linkCosts[i];
+                newSeen[newCount]  = lastSeen[i];
+                newActive[newCount] = TRUE;
+                newCount++;
             }
-            if(!found){
-                return TRUE;
+            else if(neighborActive[i]) {
+                dbg(NEIGHBOR_CHANNEL,
+                    "Node %u: Neighbor %u timed out\n",
+                    TOS_NODE_ID, neighborList[i]);
+                changed = TRUE;
             }
         }
-        return FALSE;
+
+        if(newCount != neighborCount || changed) {
+            memcpy(neighborList, newList, sizeof(uint16_t)*newCount);
+            memcpy(linkCosts, newCosts, sizeof(uint32_t)*newCount);
+            memcpy(lastSeen, newSeen, sizeof(uint32_t)*newCount);
+            memcpy(neighborActive, newActive, sizeof(bool)*newCount);
+
+            neighborCount = newCount;
+
+            signal NeighborDiscovery.neighborsChanged();
+        }
     }
+
 
     command void NeighborDiscovery.start(){
         uint8_t i;
         for(i = 0; i < 20; i++){
             linkCosts[i] = INF;
+            rttEWMA[i] = 150;
+            waitingForRTT[i] = FALSE;
+            neighborActive[i] = FALSE;
+            lastSeen[i] = 0;
         }
         call NeighborTimer.startOneShot(1000 + (uint16_t)(call Random.rand16() % 1000));
     }
 
     task void findNeighbors(){
-        pack sendPacket;
-        uint16_t destination = AM_BROADCAST_ADDR;
-        uint8_t *payload = 0;
-        uint16_t nTTL = 1;
-        
-        memcpy(previousNeighborList, neighborList, sizeof(neighborList));
-        previousNeighborCount = neighborCount;
+        pack pkt;
+        uint8_t i;
+        uint32_t now;
         currentSeq++;
-        discoveryInProgress = TRUE;
-        pingStartTime = call NeighborTimer.getNow();
-        
-        makePack(&sendPacket, TOS_NODE_ID, destination, nTTL, PROTOCOL_NEIGHBORPING, currentSeq, payload, 0);
-        call Sender.send(sendPacket, destination);
 
-        call NeighborTimer.startPeriodic(10000 + (uint16_t)(call Random.rand16() % 1000));
         
-        call CostTimer.startOneShot(2000);
+        makePack(&pkt, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_NEIGHBORPING, currentSeq, NULL, 0);
+        call Sender.send(pkt, AM_BROADCAST_ADDR);
+
+        now = call NeighborTimer.getNow();
+        for(i = 0; i < neighborCount; i++) {
+            rttStartTime[i] = now;
+            waitingForRTT[i] = TRUE;
+
+            makePack(&pkt, TOS_NODE_ID, neighborList[i],1, PROTOCOL_NEIGHBORPING, currentSeq, NULL, 0);
+
+            call Sender.send(pkt, neighborList[i]);
+        }
+
+        call CostTimer.startOneShot(1500);
     }
 
     event void NeighborTimer.fired(){
+        checkNeighborTimeouts();
         post findNeighbors();
-    }
-    
-    event void CostTimer.fired(){
-        discoveryInProgress = FALSE;
-        
-        if(neighborsHaveChanged()){
-            dbg(NEIGHBOR_CHANNEL, "Node %u: Neighbors changed! Signaling...\n", TOS_NODE_ID);
-            signal NeighborDiscovery.neighborsChanged();
-        }
     }
 
     command void NeighborDiscovery.printNeighbors(){    
         uint8_t i;
-        dbg(NEIGHBOR_CHANNEL, "Node %u Neighbors (%u):\n", TOS_NODE_ID, neighborCount);
+        // dbg(GENERAL_CHANNEL, "Node %u Neighbors (%u):\n", TOS_NODE_ID, neighborCount);
         for(i = 0; i < neighborCount; i++){
-            dbg(NEIGHBOR_CHANNEL, "  Neighbor %u: Node %u (Cost: %u)\n", i, neighborList[i], linkCosts[i]);
+            // dbg(GENERAL_CHANNEL, "  Neighbor %u: Node %u (Cost: %u)\n", i, neighborList[i], linkCosts[i]);
         }
     }
 
     event message_t* NeighborReceive.receive(message_t* msg, void* payload, uint8_t len){
-        if(len == sizeof(pack)){
-            pack* myMsg = (pack*) payload;
-            call NeighborDiscovery.receiveNeighbors(myMsg->protocol, myMsg->src, &neighborCount);
+        pack* p = (pack*)payload;
+
+        if(len < sizeof(pack))
             return msg;
-        }
+
+
+        if(p->src == TOS_NODE_ID)
+            return msg;
+
+        // Handle neighbor update and RTT updates
+        call NeighborDiscovery.receiveNeighbors(p->protocol, p->src, NULL);
+
         return msg;
     }
 
-    command void NeighborDiscovery.receiveNeighbors(uint16_t protocol, uint16_t src, uint8_t* idx){
-        pack returnPacket;
-        uint8_t *payload = 0;
-        uint16_t repTTL = 1;
-        uint32_t now;
-        uint32_t rtt;
-        uint16_t cost;
-        uint8_t neighborIdx;
+    command void NeighborDiscovery.receiveNeighbors(uint16_t protocol, uint16_t src, uint8_t* unused) {
+        pack reply;
+        uint8_t idx = addOrUpdateNeighbor(src);
+        if(idx == 0xFF) return;
 
-        if(src == TOS_NODE_ID){
-            return;
-        }
+        lastSeen[idx] = call NeighborTimer.getNow();
 
-        if(protocol == PROTOCOL_NEIGHBORREPLY){  
-            // Calculate RTT and cost
-            if(discoveryInProgress) {
-                now = call NeighborTimer.getNow();
-        
-                // Handle timer wrap-around with reasonable bounds
-                if(now >= pingStartTime) {
-                    rtt = now - pingStartTime;
-                } else {
-                    // Timer wrapped around - use maximum reasonable RTT
-                    rtt = 5000; // 5 seconds maximum reasonable RTT
-                }
-                
-                // Convert RTT to cost with reasonable bounds
-                cost = (rtt / 10); // Scale down RTT to get reasonable costs
-                if(cost < 1){
-                    cost = 1;
-                }
-                if(cost > 100){
-                    cost = 100; // Max reasonable cost
-                } 
-                
-                dbg(NEIGHBOR_CHANNEL, "Node %u: RTT=%u, cost=%u\n", TOS_NODE_ID, rtt, cost);
-                
-                neighborIdx = getNeighborIndex(src);
-                if(neighborIdx != 0xFF){
-                    // Update existing neighbor cost
-                    linkCosts[neighborIdx] = cost;
-                } 
-                else if(*idx < 20){
-                    // Add new neighbor
-                    neighborList[*idx] = src;
-                    linkCosts[*idx] = cost;
-                    (*idx)++;
+        if(protocol == PROTOCOL_NEIGHBORREPLY) {
+            if(waitingForRTT[idx]) {
+                uint32_t now = call NeighborTimer.getNow();
+                uint32_t sample = now - rttStartTime[idx];
+
+                waitingForRTT[idx] = FALSE;
+
+                if(sample >= 2 && sample <= 2000) {
+                    uint32_t old = rttEWMA[idx];
+                    uint32_t smoothed = (ALPHA_NUM * sample + (ALPHA_DEN - ALPHA_NUM) * old)/ ALPHA_DEN;
+                    uint32_t scaled_cost;
+
+                    if(smoothed < 1000) {  // Less than 1ms = excellent
+                        scaled_cost = 1;
+                    } else if(smoothed < 10000) {  // 1-10ms = good
+                        scaled_cost = smoothed / 1000;  // 1-10
+                    } else if(smoothed < 60000) {  // 10-60ms = okay
+                        scaled_cost = 10 + (smoothed / 10000);  // 10-16
+                    } else {  // >60ms = poor
+                        scaled_cost = 50;  // High but not infinite
+                    }
+                    
+                    // Cap at reasonable max
+                    if(scaled_cost > 100) scaled_cost = 100;
+    
+                    rttEWMA[idx] = smoothed;
+                    linkCosts[idx] = scaled_cost;
+
+                    dbg(NEIGHBOR_CHANNEL,
+                        "Node %u: RTT %u → EWMA %u for neighbor %u\n",
+                        TOS_NODE_ID, sample, smoothed, src);
+
+                    signal NeighborDiscovery.neighborsChanged();
                 }
             }
         }
-        else if(protocol == PROTOCOL_NEIGHBORPING){ 
-            if(!isNeighbor(src) && *idx < 20){
-                neighborList[*idx] = src;
-                linkCosts[*idx] = 1;  // Default cost
-                (*idx)++;
-            }
-            
-            makePack(&returnPacket, TOS_NODE_ID, src, repTTL, PROTOCOL_NEIGHBORREPLY, currentSeq, payload, 0);
-            call Sender.send(returnPacket, src);
+        else if(protocol == PROTOCOL_NEIGHBORPING) {
+            // Respond with unicast reply
+            makePack(&reply, TOS_NODE_ID, src,
+                     1, PROTOCOL_NEIGHBORREPLY, currentSeq,
+                     NULL, 0);
+
+            call Sender.send(reply, src);
         }
+    }
+
+    event void CostTimer.fired(){
+        signal NeighborDiscovery.neighborsChanged();
+        call CostTimer.startOneShot(2000);
     }
 
     command uint8_t NeighborDiscovery.getCount(){
@@ -239,7 +282,11 @@ implementation {
         return neighborList;
     }
     
-    command uint16_t* NeighborDiscovery.getCostList(){
+    command uint32_t* NeighborDiscovery.getCostList(){
         return linkCosts;
+    }
+
+    command bool NeighborDiscovery.isNeighbor(uint16_t neighborId) {
+        return getNeighborIndex(neighborId) != 0xFF;
     }
 }

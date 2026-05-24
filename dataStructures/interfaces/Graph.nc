@@ -23,4 +23,6 @@ interface Graph{
     // Get graph stats
     command uint16_t getNodeCount();
     command uint16_t getEdgeCount();
+
+    command void clearNodeEdges(uint16_t node);
 }

@@ -11,11 +11,15 @@ enum{
 enum socket_state{
     CLOSED,
     LISTEN,
-    ESTABLISHED,
     SYN_SENT,
     SYN_RCVD,
+    ESTABLISHED,
+    FIN_WAIT_1,
+    FIN_WAIT_2,
+    CLOSE_WAIT,
+    LAST_ACK,
+    TIME_WAIT,
 };
-
 
 typedef nx_uint8_t nx_socket_port_t;
 typedef uint8_t socket_port_t;
@@ -24,10 +28,9 @@ typedef uint8_t socket_port_t;
 typedef nx_struct socket_addr_t{
     nx_socket_port_t port;
     nx_uint16_t addr;
-}socket_addr_t;
+} socket_addr_t;
 
-
-// File descripter id. Each id is associated with a socket_store_t
+// File descriptor id. Each id is associated with a socket_store_t
 typedef uint8_t socket_t;
 
 // State of a socket. 
@@ -37,20 +40,22 @@ typedef struct socket_store_t{
     socket_port_t src;
     socket_addr_t dest;
 
-    // This is the sender portion.
-    uint8_t sendBuff[SOCKET_BUFFER_SIZE];
-    uint8_t lastWritten;
-    uint8_t lastAck;
-    uint8_t lastSent;
+    uint16_t local_addr;
 
-    // This is the receiver portion
+    // Sender portion - CHANGED TO UINT16_T
+    uint8_t sendBuff[SOCKET_BUFFER_SIZE];
+    uint16_t lastWritten;  //
+    uint16_t lastAck;      //
+    uint16_t lastSent;     //
+
+    // Receiver portion - CHANGED TO UINT16_T
     uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
-    uint8_t lastRead;
-    uint8_t lastRcvd;
-    uint8_t nextExpected;
+    uint16_t lastRead;     //
+    uint16_t lastRcvd;     //
+    uint16_t nextExpected; //
 
     uint16_t RTT;
     uint8_t effectiveWindow;
-}socket_store_t;
+} socket_store_t;
 
 #endif

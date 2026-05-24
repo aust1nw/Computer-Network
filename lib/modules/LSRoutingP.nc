@@ -7,7 +7,7 @@
 #include "../../includes/sendinfo.h"
 #include "../../includes/channels.h"
 
-#define INF 9999
+#define INF 0xFFFF
 
 generic module LSRoutingP(){
     provides interface LSRouting;
@@ -15,49 +15,25 @@ generic module LSRoutingP(){
     uses interface NeighborDiscovery as ND;
     uses interface Flooding;
     uses interface Timer<TMilli> as LSATimer;
+    uses interface Timer<TMilli> as computeTimer;
+    uses interface Random;
     uses interface Hashmap<route_entry> as RoutingTable;
     uses interface Graph;
+
+    uses interface Queue<LSA*> as LSAQueue;
+    uses interface Pool<LSA> as LSAPool;
 }
 
 implementation{
     uint16_t mySeq = 0;
     LSA LSDB[MAX_NODES];
     uint16_t lsaCache[MAX_NODES];
-    
-    uint16_t dist[MAX_NODES];
-    bool visited[MAX_NODES];
-    int prevNode[MAX_NODES];
-    
     bool initialized = FALSE;
-
-    uint16_t getNextHopFromPath(uint16_t dest, uint16_t* preNode, uint16_t source){
-        uint16_t next = dest;
-        if(dest == source || preNode[dest] == dest){
-            return dest;
-        }
-        while(preNode[next] != source && preNode[next] != next){
-            next = preNode[next];
-        }
-        return next;
-    }
-
-    // Check if path would be too similar to previous paths
-    bool isSamePath(uint16_t u, uint16_t v, uint16_t preNode[3][MAX_NODES], uint8_t k, uint16_t source){
-        uint16_t currentNextHop = getNextHopFromPath(v, preNode[k], source);
-        uint8_t i;
-        
-        for(i = 0; i < k; i++){
-            uint16_t prevNextHop = getNextHopFromPath(v, preNode[i], source);
-            if(currentNextHop == prevNextHop){
-                return TRUE;
-            }
-        }
-        return FALSE;
-    }
+    uint32_t lsaTimeStamps[MAX_NODES];
 
     command void LSRouting.start(){
         uint8_t i;
-        dbg(ROUTING_CHANNEL, "Node %u: Starting LS Routing module\n", TOS_NODE_ID);
+        // dbg(ROUTING_CHANNEL, "Node %u: Starting LS Routing module\n", TOS_NODE_ID);
         for(i = 0; i < MAX_NODES; i++){
             lsaCache[i] = 0;
             LSDB[i].nodeID = i;
@@ -69,234 +45,205 @@ implementation{
         call Graph.clearGraph();
         
         initialized = TRUE;
-        dbg(ROUTING_CHANNEL, "Node %u: LS Routing initialized\n", TOS_NODE_ID);
+        // dbg(ROUTING_CHANNEL, "Node %u: LS Routing initialized\n", TOS_NODE_ID);
 
+        call ND.start();
         call Flooding.start();
         
-        call LSATimer.startPeriodic(10000);
+        call LSATimer.startOneShot(5000 + (uint16_t)(call Random.rand16() % 1000));
     }
 
-    command void LSRouting.sendLSA(){
+    task void sendLSA(){
         LSA packet;
         uint8_t i;
         uint8_t numNeighbors;
         uint16_t* neighborList;
-        uint16_t* costList;
+        uint32_t* costList;
         
-        dbg(ROUTING_CHANNEL, "Node %u: Preparing to send LSA\n", TOS_NODE_ID);
+        // dbg(ROUTING_CHANNEL, "Node %u: Preparing to send LSA\n", TOS_NODE_ID);
         if(!initialized){
             return;
         }
         
         numNeighbors = call ND.getCount();
-        
-        if(numNeighbors == 0){
-            dbg(ROUTING_CHANNEL, "Node %u: No neighbors, not sending LSA\n", TOS_NODE_ID);
-            return;
-        }
+        call Graph.clearNodeEdges(TOS_NODE_ID);
 
-        if(!call Flooding.isReady()){
-            dbg(ROUTING_CHANNEL, "Node %u: Flooding module not ready, not sending LSA\n", TOS_NODE_ID);
-            return;
-        }
+        // if(numNeighbors == 0){
+        //     dbg(ROUTING_CHANNEL, "Node %u: No neighbors, not sending LSA\n", TOS_NODE_ID);
+        //     return;
+        // }
         
+        neighborList = call ND.getNeighborList();
+        costList = call ND.getCostList();
+
         packet.nodeID = TOS_NODE_ID;
         packet.seq = ++mySeq;
         packet.numNeighbors = numNeighbors;
-
-        neighborList = call ND.getNeighborList();
-        costList = call ND.getCostList();
         
-        for (i = 0; i < numNeighbors && i < MAX_NEIGHBORS; i++) {
+        for(i = 0; i < numNeighbors && i < MAX_NEIGHBORS; i++){
             packet.neighbors[i] = neighborList[i];
             packet.costs[i] = costList[i];
         }
 
-        dbg(ROUTING_CHANNEL, "Node %u: Sending LSA (seq=%u, neighbors=%u)\n", TOS_NODE_ID, packet.seq, packet.numNeighbors);
+        // sdbg(ROUTING_CHANNEL, "Node %u: Sending LSA (seq=%u, neighbors=%u)\n", TOS_NODE_ID, packet.seq, packet.numNeighbors);
         
         LSDB[TOS_NODE_ID] = packet;
         lsaCache[TOS_NODE_ID] = packet.seq;
         
         for(i = 0; i < packet.numNeighbors; i++){
-            call Graph.addEdge(TOS_NODE_ID, packet.neighbors[i], packet.costs[i]);
+            uint16_t n = packet.neighbors[i];
+            uint16_t c = (uint16_t)packet.costs[i];
+
+            call Graph.addEdge(TOS_NODE_ID, n, c);
+            // call Graph.addEdge(n, TOS_NODE_ID, c);
         }
-        dbg(ROUTING_CHANNEL, "Flooding now\n");
+
+        call computeTimer.startOneShot(500);
+
+        if(!call Flooding.isReady()){
+            // dbg(ROUTING_CHANNEL, "Node %u: Flooding module not ready, not sending LSA\n", TOS_NODE_ID);
+            return;
+        }
+
+        // dbg(ROUTING_CHANNEL, "Flooding now\n");
         call Flooding.floodLSA((uint8_t*)&packet, sizeof(LSA));
     }
 
-    command void LSRouting.handleLSA(uint16_t src, uint8_t* lsaData){
-        LSA* lsa;
-        uint8_t i;
+    task void computeRoutes(){
+        uint16_t i, j, u, v;
+        uint16_t source = TOS_NODE_ID;
+        uint32_t dist[MAX_NODES];
+        uint16_t prev[MAX_NODES]; 
+        bool visited[MAX_NODES];
+        uint32_t minDist; // Correct, as this tracks the total path cost
+        uint32_t* oldKeys = call RoutingTable.getKeys();
+        uint16_t oldSize = call RoutingTable.size();
         
-        lsa = (LSA*)lsaData;
-        
-        dbg(ROUTING_CHANNEL, "Node %u: Received LSA from node %u (seq=%u)\n", TOS_NODE_ID, lsa->nodeID, lsa->seq);
-        
-        if(lsaCache[lsa->nodeID] == 0 || lsa->seq > lsaCache[lsa->nodeID]){
-            lsaCache[lsa->nodeID] = lsa->seq;
-            LSDB[lsa->nodeID] = *lsa;
-
-            dbg(ROUTING_CHANNEL, "Node %u: Updated LSDB entry for node %u (seq=%u, neighbors=%u)\n", TOS_NODE_ID, lsa->nodeID, lsa->seq, lsa->numNeighbors);
-            
-            for(i = 0; i < lsa->numNeighbors; i++){
-                call Graph.addEdge(lsa->nodeID, lsa->neighbors[i], lsa->costs[i]);
-                dbg(ROUTING_CHANNEL, "  Added edge: %u -> %u (cost %u)\n", lsa->nodeID, lsa->neighbors[i], lsa->costs[i]);
-            }
-            call LSRouting.computeRoutes();
-        } 
-        else {
-            dbg(ROUTING_CHANNEL, "Node %u: Ignoring old/duplicate LSA from node %u (seq=%u <= cached %u)\n", TOS_NODE_ID, lsa->nodeID, lsa->seq, lsaCache[lsa->nodeID]);
+        for(j = 0; j < oldSize; j++) {
+            call RoutingTable.remove(oldKeys[j]);
         }
-    }
 
-    command void LSRouting.computeRoutes(){
-    uint16_t i, j, k, u, v, minDist;
-    uint16_t source = TOS_NODE_ID;
-    
-    // Arrays for three shortest paths
-    uint16_t distance[3][MAX_NODES];
-    uint16_t preNode[3][MAX_NODES];
-    bool visit[MAX_NODES];
-    
-    dbg(ROUTING_CHANNEL, "Node %u: Computing primary + 2 backup routes...\n", TOS_NODE_ID);
-
-    // Initialize ALL paths to INF
-    for(k = 0; k < 3; k++){
+        // Initialize Dijkstra arrays
         for(i = 0; i < MAX_NODES; i++){
-            distance[k][i] = INF;
-            preNode[k][i] = i;  // Initialize to self
+            dist[i] = INF;
+            prev[i] = 0xFFFF; 
+            visited[i] = FALSE;
         }
-        distance[k][source] = 0;  // Distance to self is 0
-    }
-    
-    // Compute primary path (standard Dijkstra)
-    for(k = 0; k < 3; k++){
-        // Reset visited array for this path
-        for(i = 0; i < MAX_NODES; i++){
-            visit[i] = FALSE;
-        }
-        
-        // Standard Dijkstra for k-th path
+        dist[source] = 0;
+
+        // Simple Dijkstra - find SINGLE shortest path
         for(i = 0; i < MAX_NODES; i++){
             // Find unvisited node with minimum distance
-            uint16_t neighborCount;
-            uint16_t* neighbors;
             minDist = INF;
-            u = MAX_NODES;
+            u = 0xFFFF;
             
-            for(j = 0; j < MAX_NODES; j++){
-                if(!visit[j] && distance[k][j] < minDist){
-                    minDist = distance[k][j];
-                    u = j;
+            for(v = 0; v < MAX_NODES; v++){
+                if(!visited[v] && dist[v] < minDist){
+                    minDist = dist[v];
+                    u = v;
                 }
             }
             
-            if(u == MAX_NODES || minDist == INF){
-                break;
-            }
-
-            visit[u] = TRUE;
-            neighborCount = call Graph.getNeighborCount(u);
-
-            if(neighborCount == 0){
-                continue;
-            }
+            if(u == 0xFFFF || minDist == INF) break;
             
-            neighbors = call Graph.getNeighbors(u);
-
-            if(neighbors == NULL){
-                continue;
-            }
+            visited[u] = TRUE;
             
-            // Update distances to neighbors
-            for(j = 0; j < neighborCount; j++){
-                uint16_t edgeCost;
-                uint32_t newDist;
-                v = neighbors[j];
-                if(visit[v]){
-                    continue;
-                }
+            for(v = 0; v < MAX_NODES; v++){
+                uint16_t linkCost = call Graph.getCost(u, v); 
                 
-                edgeCost = call Graph.getCost(u, v);
-                if(edgeCost == 0xFFFF){
-                    continue;
-                }
-                
-                newDist = distance[k][u] + edgeCost;
-                
-                // For backup paths, check if this path is too similar to previous ones
-                if(k > 0){
-                    // Check if using this edge would create the same next hop
-                    uint16_t potentialNextHop = getNextHopFromPath(v, preNode[k], source);
-                    bool skipEdge = FALSE;
-                    uint8_t prevK;
+                if(dist[u] != INF && linkCost != 0xFFFF){  
+                    uint32_t newDist = dist[u] + (uint32_t)linkCost;
                     
-                    for(prevK = 0; prevK < k; prevK++){
-                        uint16_t existingNextHop = getNextHopFromPath(v, preNode[prevK], source);
-                        if (potentialNextHop == existingNextHop) {
-                            skipEdge = TRUE;
-                            break;
-                        }
+                    if(newDist < dist[v]){
+                        dist[v] = newDist;
+                        prev[v] = u;
                     }
-                    
-                    if(skipEdge){
-                        continue;
-                    }
-                }
-                
-                if(newDist < distance[k][v]){
-                    distance[k][v] = newDist;
-                    preNode[k][v] = u;
                 }
             }
         }
-    }
 
-        // Store routes in routing table
+        // Store routes in routing table (Path Tracing)
         for(i = 0; i < MAX_NODES; i++){
-            uint32_t key = (uint32_t)i;
-            route_entry newRoute;
-
-            if(i == 0 || i == source){
+            uint16_t nextHop = i;
+            route_entry r;
+            
+            // Special case: destination is myself
+            if(i == source) {
+                r.primaryNextHop = source;
+                r.primaryCost = 0;
+                call RoutingTable.insert(i, r);
                 continue;
             }
             
-            newRoute.dest = i;
-            
-            // Primary route
-            newRoute.primaryCost = distance[0][i];
-            newRoute.primaryNextHop = getNextHopFromPath(i, preNode[0], source);
-            
-            // First backup route
-            newRoute.backup1Cost = distance[1][i];
-            newRoute.backup1NextHop = getNextHopFromPath(i, preNode[1], source);
-            
-            // Second backup route  
-            newRoute.backup2Cost = distance[2][i];
-            newRoute.backup2NextHop = getNextHopFromPath(i, preNode[2], source);
-            
-            // Count available routes
-            newRoute.routeCount = 0;
-            if(distance[0][i] != INF){
-                newRoute.routeCount++;
-            }
-            if(distance[1][i] != INF && newRoute.backup1NextHop != newRoute.primaryNextHop){
-                newRoute.routeCount++;
-            }
-            if(distance[2][i] != INF && newRoute.backup2NextHop != newRoute.primaryNextHop && newRoute.backup2NextHop != newRoute.backup1NextHop){
-                newRoute.routeCount++;
+            // If unreachable
+            if(prev[i] == 0xFFFF || dist[i] == INF) {
+                call RoutingTable.remove(i);
+                continue;
             }
             
-            call RoutingTable.insert(key, newRoute);
+            // Walk back to find first hop from source
+            while (prev[nextHop] != source && prev[nextHop] != 0xFFFF) {
+                nextHop = prev[nextHop];
+            }
+            
+            if(prev[nextHop] == 0xFFFF) {
+                // Somehow chain died – treat as unreachable
+                call RoutingTable.remove(i);
+                continue;
+            }
+
+            if(dist[i] > INF) dist[i] = INF;
+
+            // Install route
+            r.primaryNextHop = nextHop;
+            r.primaryCost = (uint16_t)dist[i];
+            call RoutingTable.insert(i, r);
         }
     }
 
+    task void processLSAQueueTask() {
+        uint8_t processed = 0;
+        while (!call LSAQueue.empty() && processed < 5) {
+            LSA* lsa = call LSAQueue.head(); 
+            uint8_t i;
+
+            lsaTimeStamps[lsa->nodeID] = call LSATimer.getNow();
+            
+            if(lsaCache[lsa->nodeID] == 0 || lsa->seq > lsaCache[lsa->nodeID]){
+                call Graph.clearNodeEdges(lsa->nodeID);
+                
+                for(i = 0; i < lsa->numNeighbors; i++){
+                    uint16_t u = lsa->nodeID;
+                    uint16_t v = lsa->neighbors[i];
+                    uint16_t c = lsa->costs[i];
+
+                    call Graph.addEdge(u, v, c);
+                }
+
+                lsaCache[lsa->nodeID] = lsa->seq;
+                LSDB[lsa->nodeID] = *lsa;
+
+                // dbg(ROUTING_CHANNEL, "Node %u: Updated LSDB entry for node %u (seq=%u)\n", TOS_NODE_ID, lsa->nodeID, lsa->seq);
+                
+                call computeTimer.startOneShot(200);
+            } 
+            else {
+                // dbg(ROUTING_CHANNEL, "Node %u: Ignoring old/duplicate LSA from node %u\n", TOS_NODE_ID, lsa->nodeID);
+            }
+            
+            call LSAQueue.dequeue();
+            call LSAPool.put(lsa);
+            processed++;
+        }
+
+        if(!call LSAQueue.empty()){
+            post processLSAQueueTask();
+        }
+    }
 
     command uint16_t LSRouting.getCost(uint16_t dest){
         return call LSRouting.getRouteCost(dest, 0);
     }
-
-    
 
     command uint16_t LSRouting.getRouteCost(uint16_t dest, uint8_t routeIndex){
         route_entry route;
@@ -310,163 +257,100 @@ implementation{
         
         switch(routeIndex) {
             case 0: return route.primaryCost;
-            case 1: return route.backup1Cost;
-            case 2: return route.backup2Cost;
             default: return INF;
         }
     }
 
-    bool isRouteAlive(uint16_t nextHop){
-        uint8_t neighborCount;
-        uint8_t i;
-        if(nextHop == TOS_NODE_ID){
-            return TRUE;
-        }
-        neighborCount = call ND.getCount();
-        for(i = 0; i < neighborCount; i++){
-            if(call ND.getList(i) == nextHop){
-                return TRUE;
-            }
-        }
-        return FALSE;
-    }
-
-    // Get best available route (automatically falls back to backups)
     command uint16_t LSRouting.getBestNextHop(uint16_t dest) {
         route_entry route;
         uint32_t key = (uint32_t)dest;
-        dbg(GENERAL_CHANNEL, "Node %u: LSRouting.getBestNextHop(%u) INTERFACE CALLED\n", TOS_NODE_ID, dest);
+        // dbg(GENERAL_CHANNEL, "Node %u: LSRouting.getBestNextHop(%u) INTERFACE CALLED\n", TOS_NODE_ID, dest);
         
-        if(dest >= MAX_NODES || dest == 0 || !call RoutingTable.contains(key)){
-            return 0;
-        }
+        // if(dest >= MAX_NODES || dest == TOS_NODE_ID || !call RoutingTable.contains(key)){
+        //     dbg(GENERAL_CHANNEL,
+        //     "Node %u: getBestNextHop(%u) → NO ROUTE\n",
+        //     TOS_NODE_ID, dest);
+        //     return 0;
+        // }
         
         route = call RoutingTable.get(key);
-        
-        // Check routes in order: primary -> backup1 -> backup2
-        if(route.primaryCost != INF && isRouteAlive(route.primaryNextHop)){
+        //  dbg(GENERAL_CHANNEL,
+        // "Node %u: getBestNextHop(%u) → %u (cost=%u)\n",
+        // TOS_NODE_ID, dest, route.primaryNextHop, route.primaryCost);
+
+        if(route.primaryCost != INF){
             return route.primaryNextHop;
-        } 
-        else if(route.backup1Cost != INF && isRouteAlive(route.backup1NextHop)){
-            return route.backup1NextHop;
-        } 
-        else if(route.backup2Cost != INF && isRouteAlive(route.backup2NextHop)){
-            return route.backup2NextHop;
         }
         
         return 0;
-    }
-
-    // Mark a route as failed and get the next best
-    command uint16_t LSRouting.routeFailed(uint16_t dest, uint16_t failedNextHop){
-        route_entry route;
-        uint32_t key = (uint32_t)dest;
-        
-        if(!call RoutingTable.contains(key)){
-            return 0;
-        }
-        
-        route = call RoutingTable.get(key);
-        
-        dbg(ROUTING_CHANNEL, "Node %u: Route to %u via %u failed, switching...\n", TOS_NODE_ID, dest, failedNextHop);
-        
-        // Return the best available route that's not the failed one
-        if(route.primaryNextHop != failedNextHop && route.primaryCost != INF && isRouteAlive(route.primaryNextHop)){
-            return route.primaryNextHop;
-        } 
-        else if(route.backup1NextHop != failedNextHop && route.backup1Cost != INF && isRouteAlive(route.backup1NextHop)){
-            return route.backup1NextHop;
-        } 
-        else if(route.backup2NextHop != failedNextHop && route.backup2Cost != INF && isRouteAlive(route.backup2NextHop)){
-            return route.backup2NextHop;
-        }
-        
-        return 0;
-    }
-
-    // Get route information
-    command uint8_t LSRouting.getRouteCount(uint16_t dest){
-        route_entry route;
-        uint32_t key = (uint32_t)dest;
-        
-        if(!call RoutingTable.contains(key)){
-            return 0;
-        }
-        
-        route = call RoutingTable.get(key);
-        return route.routeCount;
     }
 
     command void LSRouting.printRouteTable(){
         uint16_t i;
         route_entry route;
-        uint32_t* keyList;
-        uint16_t numKeys;
+        uint32_t* keys = call RoutingTable.getKeys();
+        uint16_t numKeys = call RoutingTable.size();
         uint32_t key;
         
-        dbg(GENERAL_CHANNEL, "Node %u Routing Table (Primary + 2 Backups):\n", TOS_NODE_ID);
-        
-        keyList = call RoutingTable.getKeys();
-        numKeys = call RoutingTable.size();
+        dbg(GENERAL_CHANNEL, "Node %u Routing Table:\n", TOS_NODE_ID);
         
         for(i = 0; i < numKeys; i++){
-            key = keyList[i];
+            uint16_t destID = (uint16_t)keys[i];
+            key = keys[i];
             route = call RoutingTable.get(key);
             
             if(key == 0 || route.primaryCost == INF){
                 continue;
             }
             
-            dbg(GENERAL_CHANNEL, "  Destination %u:\n", route.dest);
+            dbg(GENERAL_CHANNEL, "  Destination %u:\n", destID);
             dbg(GENERAL_CHANNEL, "    Primary Hop: %u; Cost: %u\n", route.primaryNextHop, route.primaryCost);
-            
-            if(route.backup1Cost != INF){
-                dbg(GENERAL_CHANNEL, "    Backup1 Hop: %u; Cost: %u\n", route.backup1NextHop, route.backup1Cost);
-            }
-            
-            if(route.backup2Cost != INF){
-                dbg(GENERAL_CHANNEL, "    Backup2 Hop: %u; Cost: %u\n", route.backup2NextHop, route.backup2Cost);
-            }
-        }
-    }
-
-    command void LSRouting.printLinkState() {
-        uint16_t i, j;
-        
-        dbg(ROUTING_CHANNEL, "Node %u Link State Database:\n", TOS_NODE_ID);
-        dbg(ROUTING_CHANNEL, "=============================\n");
-        
-        for (i = 0; i < MAX_NODES; i++) {
-            // Skip nodes that we have no information about
-            if(lsaCache[i] == 0){
-                continue;
-            }
-            dbg(ROUTING_CHANNEL, "Node %u (LSA seq=%u):\n", LSDB[i].nodeID, LSDB[i].seq);
-            
-            if (LSDB[i].numNeighbors == 0) {
-                dbg(ROUTING_CHANNEL, "  No neighbors\n");
-            } else {
-                for (j = 0; j < LSDB[i].numNeighbors && j < MAX_NEIGHBORS; j++) {
-                    dbg(ROUTING_CHANNEL, "  -> Node %u (cost %u)\n", 
-                        LSDB[i].neighbors[j], LSDB[i].costs[j]);
-                }
-            }
-            dbg(ROUTING_CHANNEL, "\n");
         }
     }
 
     event void LSATimer.fired(){
-        dbg(ROUTING_CHANNEL, "Node %u: Periodic LSA timer fired\n", TOS_NODE_ID);
-        call LSRouting.sendLSA();
+        // dbg(ROUTING_CHANNEL, "Node %u: Periodic LSA timer fired\n", TOS_NODE_ID);
+        post sendLSA();
     }
 
     event void ND.neighborsChanged(){
-        dbg(ROUTING_CHANNEL, "Node %u: Neighbor list changed, triggering LSA\n", TOS_NODE_ID);
-        call LSRouting.sendLSA();
+        // uint32_t* keys = call RoutingTable.getKeys();
+        // uint16_t numKeys = call RoutingTable.size();
+        // uint16_t i;
+
+        // dbg(GENERAL_CHANNEL, "Node %u: *** ND.neighborsChanged() EVENT RECEIVED ***\n", TOS_NODE_ID);
+        // dbg(GENERAL_CHANNEL, "Node %u: Neighbor list changed, clearing ALL routes and recomputing\n", TOS_NODE_ID);
+        
+        // for(i = 0; i < numKeys; i++) {
+        //     call RoutingTable.remove(keys[i]);
+        // }
+        
+        // mySeq++;
+
+        // dbg(GENERAL_CHANNEL, "Node %u: Triggering LSA broadcast after neighbor change\n", TOS_NODE_ID);
+        
+        post sendLSA();
+    }
+
+    event void computeTimer.fired(){
+        post computeRoutes();
     }
 
     event void Flooding.receivedLSA(uint16_t src, uint8_t* lsaData){
-        dbg(ROUTING_CHANNEL, "Node %u: Flooding module reported received LSA from %u\n", TOS_NODE_ID, src);
-        call LSRouting.handleLSA(src, lsaData);
+        LSA* lsaBuf = NULL;
+        
+        if (!call LSAPool.empty()) {
+            lsaBuf = call LSAPool.get();
+        }
+            
+        if (lsaBuf != NULL) {
+            *lsaBuf = *(LSA*)lsaData; 
+            
+            if (call LSAQueue.enqueue(lsaBuf) == SUCCESS) {
+                post processLSAQueueTask(); 
+            } else {
+                call LSAPool.put(lsaBuf);
+            }
+        }
     }
 }

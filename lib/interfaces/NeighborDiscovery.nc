@@ -15,7 +15,9 @@ interface NeighborDiscovery{
     command uint16_t getLinkCost(uint16_t neighborId);
     
     command uint16_t* getNeighborList();
-    command uint16_t* getCostList();
+    command uint32_t* getCostList();
     
     event void neighborsChanged();
+
+    command bool isNeighbor(uint16_t neighborId);
 }

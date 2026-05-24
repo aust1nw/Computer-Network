@@ -40,4 +40,10 @@ implementation {
     Node.Flooding -> Flooding;
     Node.LSRouting -> LSRouting;
     Node.IPForwarding -> IPForwarding;  
+
+    components new TransportC() as Transport;
+    Node.Transport -> Transport;
+
+    components new ApplicationC() as Application;
+    Node.Application -> Application;
 }
