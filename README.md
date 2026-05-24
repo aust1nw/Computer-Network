@@ -1,39 +1,170 @@
-# Introduction
-This repository contains a TinyOS/TOSSIM network project with support for packet
-forwarding, link-state routing, transport-layer messaging, and simulation tooling.
-It is structured for local development and repeatable simulator-based testing.
+# TinyOS Network Stack and Chat Simulation
 
-# Docker Setup
-This repository now includes a Docker-based development setup for TinyOS/TOSSIM work.
-The goal is to give you a repeatable Linux environment for compiling the project and
-running the Python simulation scripts without changing your host machine.
+This repository contains a TinyOS/TOSSIM-based wireless network project. It implements
+neighbor discovery, link-state flooding, shortest-path routing, IP-style packet
+forwarding, a lightweight TCP-like transport layer, and an application layer used for
+transport tests and chat-style messaging in simulation.
+
+The code is organized for simulator-driven development. Most interactions happen through
+TOSSIM command packets and Python test scripts rather than direct hardware deployment.
+
+# Features
+
+* Neighbor discovery with periodic probes and link-cost estimation
+* Flood-based link-state advertisement propagation
+* Dijkstra-based route computation over a maintained graph
+* IP-style forwarding across multiple hops
+* TCP-like transport with sockets, connection state, ACKs, retransmission, and teardown
+* Application-level transport tests and a small multi-user chat service
+* Docker-based development environment for repeatable TinyOS/TOSSIM builds
+
+# Architecture
+
+## Top-level node wiring
+
+`NodeC.nc` wires the system together. A node is composed of:
+
+* `NeighborDiscovery` for direct-link detection and cost sampling
+* `Flooding` for propagating LSAs
+* `LSRouting` for maintaining the routing table
+* `IPForwarding` for routing packets to their final destination
+* `Transport` for socket-based reliable delivery
+* `Application` for test traffic and chat behavior
+* `CommandHandler` for simulation-driven control
+
+`Node.nc` acts as the main integration point. It boots the radio stack, starts
+forwarding/routing, and routes incoming simulator commands into the relevant subsystem.
+
+## Network layers
+
+### Neighbor discovery
+
+`lib/modules/NeighborDiscoveryP.nc` periodically probes the local radio neighborhood,
+tracks reachable peers, and maintains per-neighbor cost estimates. These neighbor and
+cost lists are then consumed by the routing layer.
+
+### Flooding
+
+`lib/modules/FloodingP.nc` propagates link-state advertisements and acknowledgements.
+This is the distribution mechanism used by the routing layer to share topology updates.
+
+### Link-state routing
+
+`lib/modules/LSRoutingP.nc` builds a graph from local and received LSAs, then computes
+shortest paths with Dijkstra's algorithm. The resulting routing table stores the next
+hop and total path cost for each reachable destination.
+
+### IP forwarding
+
+`lib/modules/IPForwardingP.nc` wraps payloads in an IP-style header, chooses the next
+hop from the routing table, and forwards packets hop by hop until they reach their final
+destination. It supports both ping-style traffic and transport-layer traffic.
+
+### Transport
+
+`lib/modules/TransportP.nc` implements a lightweight connection-oriented transport layer
+using the `Transport` interface in `lib/interfaces/Transport.nc`.
+
+Implemented transport concepts include:
+
+* socket allocation and binding
+* listen, accept, and connect
+* sequence and acknowledgement handling
+* buffered reads and writes
+* retransmission with timer-based retry
+* graceful close and connection state transitions
+
+The transport layer is carried over the forwarding layer rather than directly over a
+single radio hop.
+
+### Application layer
+
+`lib/modules/ApplicationP.nc` provides two main behaviors:
+
+* transport test client/server flows for exercising connection setup and bulk transfer
+* a chat server/client model built on the transport layer
+
+The chat application supports commands such as:
+
+* `hello <name> <port>`
+* `msg <text>`
+* `listusr`
+* `whisper <username> <message>`
+* `quit`
+
+# Repository Layout
+
+* `Node.nc`, `NodeC.nc` - top-level TinyOS module/configuration
+* `lib/interfaces/` - interfaces for command handling, routing, forwarding, transport,
+  application control, and helper components
+* `lib/modules/` - implementations of networking, transport, and application logic
+* `includes/` - packet formats, protocol IDs, socket definitions, routing entries, and
+  shared types
+* `dataStructures/` - generic hashmap, list, and graph components used by routing logic
+* `topo/` - network topologies for simulation
+* `noise/` - radio noise traces for simulation
+* `TestSim.py`, `pingTest.py` - Python TOSSIM drivers
+
+# Protocol and Command Surface
+
+## Protocol IDs
+
+The shared protocol definitions live in `includes/protocol.h`. The stack currently uses
+protocol values for:
+
+* ping and ping reply traffic
+* link-state advertisements and acknowledgements
+* IP forwarding packets
+* transport packets
+* neighbor discovery request/reply traffic
+
+## Simulation commands
+
+The command IDs are defined in `includes/command.h` and driven by `TestSim.py`.
+Supported commands include:
+
+* ping injection
+* neighbor dump
+* route table dump
+* transport test client start
+* transport test server start
+* application chat client start
+* application chat server start
+
+# Running with Docker
+
+This repository includes a Docker-based TinyOS/TOSSIM setup for development on systems
+that do not already have TinyOS installed.
 
 ## Files
-* `Dockerfile` - builds the TinyOS development image.
-* `docker-compose.yml` - starts an interactive container with this repository mounted
-at `/workspace`.
-* `docker/entrypoint.sh` - sets the TinyOS environment variables used by the Makefile.
+
+* `Dockerfile` - builds the TinyOS development image
+* `docker-compose.yml` - starts an interactive container with the repository mounted at
+  `/workspace`
+* `docker/entrypoint.sh` - sets the TinyOS environment variables expected by the build
 
 ## Prerequisites
-Install Docker Desktop or Docker Engine on your machine before using these steps.
+
+Install Docker Desktop or Docker Engine.
 
 ## Build the image
-From the repository root, run:
 
 ```bash
 docker compose build
 ```
 
-## Start a shell in the container
+## Open a shell in the container
+
 ```bash
 docker compose run --rm tinyos
 ```
 
-This opens a shell in `/workspace`, which is the mounted copy of this repository.
-Any file changes you make in the container will appear in your local checkout.
+The repository is mounted into `/workspace`, so edits made in the container are reflected
+in the local checkout.
 
-## Compile the simulator artifacts
-Inside the container, run:
+## Compile simulator artifacts
+
+Inside the container:
 
 ```bash
 make clean
@@ -42,12 +173,12 @@ make CommandMsg.py
 make packet.py
 ```
 
-If `make micaz sim` succeeds, it should generate simulator outputs such as
-`TOSSIM.py` and `_TOSSIMmodule.so` in the repo root.
+Successful simulator builds should generate artifacts such as `TOSSIM.py` and
+`_TOSSIMmodule.so`.
 
-## Run a simulation
-After building the simulator artifacts, run one of the Python scripts from inside
-the same container shell:
+## Run simulation scripts
+
+Inside the container:
 
 ```bash
 python2 pingTest.py
@@ -59,117 +190,108 @@ or
 python2 TestSim.py
 ```
 
-## One-command workflow
-If you want to build and immediately open a shell:
+## Notes
 
-```bash
-docker compose build
-docker compose run --rm tinyos
-```
-
-## Rebuilding after code changes
-Normal source changes do not require rebuilding the Docker image. Rebuild the image
-only if you change:
-* `Dockerfile`
-* `docker-compose.yml`
-* `docker/entrypoint.sh`
-
-For normal code changes, just rerun:
-
-```bash
-make micaz sim
-```
-
-## Notes and assumptions
-* This setup is based on Ubuntu 20.04 because Ubuntu Focal still provides `tinyos-tools`
-and related packages used by the project.
-* The image assumes TinyOS installs into `/usr/share/tinyos`, which matches the package
-layout used by the Ubuntu package set.
-* The Python simulation scripts in this repo use Python 2 syntax, so commands in the
-container use `python2`.
-* This setup is intended for simulation and local development. It does not configure
-USB device passthrough for flashing physical motes.
-
-# General Information
-## Data Structures
-There are two data structures included into the project design to help with the
-implementation. See dataStructures/interfaces/ for the header information of these
-structures.
-
-* **Hashmap** - This is for anything that needs to retrieve a value based on a key.
-
-* **List** - The list is design to have pushfront, pushback capabilities. For the most part,
-you can stick with an array or even a QueueC (FIFO) which are more robust.
-
-## General Libraries
-/lib/interfaces
-
-* **CommandHandler** - CommandHandler is what interfaces with TOSSIM. Commands are
-sent to this function, and based on the parameters passed, an event is fired.
-* **SimpleSend** - This is a wrapper of the lower level sender in TinyOS. The features
-included is a basic queuing mechanism and some small delays to prevent collisions. Do
-not change the delays. You can duplicate SimpleSendC to use a different AM type or
-possibly rewire it.
-* **Transport** - This interface defines the socket and connection API used by the
-transport layer implementation in the repository.
-
-## Noise
-/noise/
-
-This is the "noise" of the network. A heavy noised network will cause issues with
-packet loss.
-
-* **no_noise.txt** - There should be no packet loss using this model.
-
-## Topography
-/topo/
-
-This folder contains a few example topographies of the network and how they are
-connected to each other. Be sure to try additional networks when testing your code
-to cover a wider range of routing and transport behavior.
-
-* **long_line.topo** - this topography is a line of 19 motes that have bidirectional
-links.
-* **example.topo** - A slightly more complex connection
-
-Each line has three values, the source node, the destination node, and the gain.
-For now you can keep the gain constant for all of your topographies. A line written
-as ```1 2 -53``` denotes a one-way connection from 1 to 2. To make it bidirectional
-include also ```2 1 -53```.
+* The container uses Ubuntu 20.04 because it still provides the TinyOS packages used
+  by this project.
+* The image assumes TinyOS is installed under `/usr/share/tinyos`.
+* The Python simulation tooling in this repository uses Python 2 syntax.
+* The Docker setup is aimed at simulation and development, not USB flashing of physical
+  motes.
 
 # Running Simulations
-The following is an example of a simulation script.
-```
+
+## Python drivers
+
+`TestSim.py` is the main simulation harness. It can:
+
+* load a topology from `topo/`
+* load a noise trace from `noise/`
+* boot all motes
+* enable debug channels
+* inject commands into selected nodes
+
+Useful helpers in `TestSim.py` include:
+
+* `ping(source, dest, msg)`
+* `neighborDMP(destination)`
+* `routeDMP(destination)`
+* `testServer(destination)`
+* `testClient(destination)`
+* `appServer(destination)`
+* `appClient(destination, port)`
+* `chat(node, text)`
+
+## Example workflow
+
+```python
 from TestSim import TestSim
 
 def main():
-    # Get simulation ready to run.
-    s = TestSim();
+    s = TestSim()
+    s.runTime(1)
+    s.loadTopo("tuna-melt.topo")
+    s.loadNoise("no_noise.txt")
+    s.bootAll()
 
-    # Before we do anything, lets simulate the network off.
-    s.runTime(1);
+    s.addChannel(s.COMMAND_CHANNEL)
+    s.addChannel(s.ROUTING_CHANNEL)
+    s.addChannel(s.TRANSPORT_CHANNEL)
 
-    # Load the the layout of the network.
-    s.loadTopo("long_line.topo");
+    s.runTime(5000)
 
-    # Add a noise model to all of the motes.
-    s.loadNoise("no_noise.txt");
+    s.appServer(1)
+    s.runTime(100)
 
-    # Turn on all of the sensors.
-    s.bootAll();
+    s.appClient(4, 200)
+    s.runTime(300)
 
-    # Add the main channels. These channels are declared in includes/channels.h
-    s.addChannel(s.COMMAND_CHANNEL);
-    s.addChannel(s.GENERAL_CHANNEL);
-
-    # After sending a ping, simulate a little to prevent collision.
-    s.runTime(1);
-    s.ping(1, 2, "Hello, World");
-    s.runTime(1);
-
-    s.ping(1, 10, "Hi!");
-    s.runTime(1);
+    s.chat(4, "msg hello from node 4")
+    s.runTime(1000)
 
 if __name__ == '__main__':
     main()
 ```
+
+# Simulation Assets
+
+## Topologies
+
+The repository includes several topology files in `topo/`, including:
+
+* `example.topo`
+* `long_line.topo`
+* `pizza.topo`
+* `tuna-melt.topo`
+
+Topology files specify directed links in the form:
+
+```text
+source destination gain
+```
+
+For bidirectional connectivity, include both directions.
+
+## Noise traces
+
+Noise files in `noise/` model radio conditions:
+
+* `no_noise.txt` - minimal loss scenario
+* `some_noise.txt` - moderate noise scenario
+* `meyer-heavy.txt` - heavier noise/loss scenario
+
+# Data Structures and Shared Types
+
+The routing and transport code relies on several shared support components:
+
+* `dataStructures/modules/HashmapC.nc`
+* `dataStructures/modules/ListC.nc`
+* `dataStructures/modules/GraphC.nc`
+* `includes/socket.h`
+* `includes/ip_header.h`
+* `includes/transport_header.h`
+* `includes/route_entry.h`
+* `includes/user.h`
+* `includes/ring.h`
+
+These provide the storage and wire-format definitions used throughout the stack.
