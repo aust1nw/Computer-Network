@@ -12,7 +12,13 @@ class TestSim:
     # COMMAND TYPES
     CMD_PING = 0
     CMD_NEIGHBOR_DUMP = 1
-    CMD_ROUTE_DUMP=3
+    CMD_LINKSTATE_DUMP = 2
+    CMD_ROUTE_DUMP = 3
+    CMD_TEST_CLIENT = 4
+    CMD_TEST_SERVER = 5
+    CMD_CLIENT_CLOSE = 6
+    CMD_APP_CLIENT = 10
+    CMD_APP_SERVER = 11
 
     # CHANNELS - see includes/channels.h
     COMMAND_CHANNEL="command";
@@ -129,45 +135,84 @@ class TestSim:
         print 'Adding Channel', channelName;
         self.t.addChannel(channelName, out);
 
+    # The following are for Project 3
+    def testClient(self, destination):
+        self.sendCMD(self.CMD_TEST_CLIENT, destination, "client");
+	
+    def testServer(self, destination):
+        self.sendCMD(self.CMD_TEST_SERVER, destination, "server");
+
+    def appClient(self, destination, port):
+        self.sendCMD(self.CMD_APP_CLIENT, destination, "{0}".format(port));
+    
+    def appServer(self, destination):
+        self.sendCMD(self.CMD_APP_SERVER, destination, "appserver");
+
+    def chat(self, node, text):
+        self.msg.set_dest(node);
+        self.msg.set_id(self.CMD_PING); # Reusing Ping ID
+        self.msg.setString_payload("D" + text); # Just the text
+        
+        self.pkt.setData(self.msg.data);
+        self.pkt.setDestination(node);
+        self.pkt.deliver(node, self.t.time()+5);
+
+    def clientClose(self, client_address, dest, srcPort, destPort):
+        # Terminates the connection gracefully on the socket associated with 
+        # [client_address], [srcPort], [destPort], and [dest].
+        payload = "{0},{1},{2}".format(dest, srcPort, destPort)
+        self.sendCMD(self.CMD_CLIENT_CLOSE, client_address, payload)
+        print "Command sent to close connection from {0}:{1} to {2}:{3}".format(client_address, srcPort, dest, destPort)
+
+
 def main():
     s = TestSim();
-    s.runTime(20);
-    s.loadTopo("long_line.topo");
+    # s.runTime(20);
+    s.runTime(1);
+    # s.loadTopo("long_line.topo");
+    s.loadTopo("tuna-melt.topo");
     s.loadNoise("no_noise.txt");
     s.bootAll();
-    # s.addChannel(s.COMMAND_CHANNEL);
-    s.addChannel(s.GENERAL_CHANNEL);
+    s.addChannel(s.COMMAND_CHANNEL);
+    # s.addChannel(s.GENERAL_CHANNEL);
     # s.addChannel(s.NEIGHBOR_CHANNEL);
     # s.addChannel(s.FLOODING_CHANNEL);
     # s.addChannel(s.ROUTING_CHANNEL);
+    # s.addChannel(s.TRANSPORT_CHANNEL);
 
-    print "=== Waiting for routing to converge ==="
+    # # After sending a ping, simulate a little to prevent collision.
+    s.runTime(5000);
+    
+    # "Start server at node 1, port 123"
+    # s.testServer(1);
+    # s.runTime(1);
+
+    # "Start client at node 4, connecting from port 200 to node 1 port 123, transfer 1000 bytes"
+    # s.testClient(4);
+    # s.runTime(10000);
+
+    s.appServer(1);
+    s.runTime(100);
+
+    # s.appClient(2, 50);
+    # s.runTime(300);
+
+    s.appClient(4, 200);
+    s.runTime(300);
+
+    s.appClient(5, 100);
+    s.runTime(300);
+
+    s.chat(4, "msg 1st from 4");
+    s.runTime(2000);
+    s.chat(4, "listusr");
+    s.runTime(2000);
+    s.chat(4, "whisper u5 secret");
     s.runTime(3000);
-    
-    # Print routing tables to verify routes exist
-    print "=== Checking routing tables ==="
-    s.routeDMP(1);
-    s.runTime(5);
-    s.routeDMP(2);
-    s.runTime(5); 
-    s.routeDMP(3);
-    s.runTime(5);
-    
-    # Test 1: Direct neighbor ping (if topology allows)
-    print "=== Test 1: Ping direct neighbor ==="
-    s.ping(1, 2, "Hello neighbor!");
-    s.runTime(10);
-    
-    # Test 2: Multi-hop ping  
-    print "=== Test 2: Ping multi-hop ==="
-    s.ping(1, 3, "Hello multi-hop!");
-    s.runTime(10);
-    
-    # Test 3: Ping from different node
-    print "=== Test 3: Ping from node 2 ==="
-    s.ping(2, 3, "Hello from node 2!");
-    s.runTime(10);
+    s.chat(4,"quit");
+    s.chat(5,"quit");
 
+    s.runTime(1000);
     
 
 if __name__ == '__main__':
