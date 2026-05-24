@@ -1,6 +1,7 @@
 # Introduction
-This skeleton code is the basis for the CSE160 network project. Additional documentation
-on what is expected will be provided as the school year continues.
+This repository contains a TinyOS/TOSSIM network project with support for packet
+forwarding, link-state routing, transport-layer messaging, and simulation tooling.
+It is structured for local development and repeatable simulator-based testing.
 
 # Docker Setup
 This repository now includes a Docker-based development setup for TinyOS/TOSSIM work.
@@ -92,7 +93,7 @@ USB device passthrough for flashing physical motes.
 # General Information
 ## Data Structures
 There are two data structures included into the project design to help with the
-assignment. See dataStructures/interfaces/ for the header information of these
+implementation. See dataStructures/interfaces/ for the header information of these
 structures.
 
 * **Hashmap** - This is for anything that needs to retrieve a value based on a key.
@@ -109,9 +110,8 @@ sent to this function, and based on the parameters passed, an event is fired.
 included is a basic queuing mechanism and some small delays to prevent collisions. Do
 not change the delays. You can duplicate SimpleSendC to use a different AM type or
 possibly rewire it.
-* **Transport** - There is only the interface of Transport included. The actual
-implementation of the Transport layer is left to the student as an exercise. For
-CSE160 this will be Project 3 so don't worry about it now.
+* **Transport** - This interface defines the socket and connection API used by the
+transport layer implementation in the repository.
 
 ## Noise
 /noise/
@@ -126,7 +126,7 @@ packet loss.
 
 This folder contains a few example topographies of the network and how they are
 connected to each other. Be sure to try additional networks when testing your code
-since additional ones will be added when grading.
+to cover a wider range of routing and transport behavior.
 
 * **long_line.topo** - this topography is a line of 19 motes that have bidirectional
 links.
