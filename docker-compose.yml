@@ -1,0 +1,12 @@
+services:
+  tinyos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cse160-tinyos:local
+    container_name: cse160-tinyos
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    volumes:
+      - .:/workspace

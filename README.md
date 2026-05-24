@@ -2,6 +2,93 @@
 This skeleton code is the basis for the CSE160 network project. Additional documentation
 on what is expected will be provided as the school year continues.
 
+# Docker Setup
+This repository now includes a Docker-based development setup for TinyOS/TOSSIM work.
+The goal is to give you a repeatable Linux environment for compiling the project and
+running the Python simulation scripts without changing your host machine.
+
+## Files
+* `Dockerfile` - builds the TinyOS development image.
+* `docker-compose.yml` - starts an interactive container with this repository mounted
+at `/workspace`.
+* `docker/entrypoint.sh` - sets the TinyOS environment variables used by the Makefile.
+
+## Prerequisites
+Install Docker Desktop or Docker Engine on your machine before using these steps.
+
+## Build the image
+From the repository root, run:
+
+```bash
+docker compose build
+```
+
+## Start a shell in the container
+```bash
+docker compose run --rm tinyos
+```
+
+This opens a shell in `/workspace`, which is the mounted copy of this repository.
+Any file changes you make in the container will appear in your local checkout.
+
+## Compile the simulator artifacts
+Inside the container, run:
+
+```bash
+make clean
+make micaz sim
+make CommandMsg.py
+make packet.py
+```
+
+If `make micaz sim` succeeds, it should generate simulator outputs such as
+`TOSSIM.py` and `_TOSSIMmodule.so` in the repo root.
+
+## Run a simulation
+After building the simulator artifacts, run one of the Python scripts from inside
+the same container shell:
+
+```bash
+python2 pingTest.py
+```
+
+or
+
+```bash
+python2 TestSim.py
+```
+
+## One-command workflow
+If you want to build and immediately open a shell:
+
+```bash
+docker compose build
+docker compose run --rm tinyos
+```
+
+## Rebuilding after code changes
+Normal source changes do not require rebuilding the Docker image. Rebuild the image
+only if you change:
+* `Dockerfile`
+* `docker-compose.yml`
+* `docker/entrypoint.sh`
+
+For normal code changes, just rerun:
+
+```bash
+make micaz sim
+```
+
+## Notes and assumptions
+* This setup is based on Ubuntu 20.04 because Ubuntu Focal still provides `tinyos-tools`
+and related packages used by the project.
+* The image assumes TinyOS installs into `/usr/share/tinyos`, which matches the package
+layout used by the Ubuntu package set.
+* The Python simulation scripts in this repo use Python 2 syntax, so commands in the
+container use `python2`.
+* This setup is intended for simulation and local development. It does not configure
+USB device passthrough for flashing physical motes.
+
 # General Information
 ## Data Structures
 There are two data structures included into the project design to help with the

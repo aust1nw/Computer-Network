@@ -1,0 +1,9 @@
+.git
+.gitignore
+build
+simbuild
+*.pyc
+*.pyo
+*.xml
+TOSSIM.py
+_TOSSIMmodule.so
